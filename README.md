@@ -87,7 +87,7 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Filters are combined in SQL before counting and paging (Task 1). |
+| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `slaStatus`, `sortBy`, `sortDirection`. Filters are combined in SQL before counting and paging (Task 1). |
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
@@ -167,8 +167,8 @@ For separate commits, group the frontend hook and its test as the defect fix; gr
 the backend query, contract comment and query tests as server-side filtering.
 Commit documentation separately or with the relevant implementation.
 
-Task 2 escalation/triage, Task 3 authentication and Task 4 API containerization are
-not implemented by this change. See `APPROACH.md` for the Task 1 design decisions.
+Task 1 covers filtering. Task 2 progress is documented below; authentication
+and API containerization remain later assessment tasks. See `APPROACH.md` for the Task 1 design decisions.
 
 Verification completed for Task 1: full backend and frontend tests, lint, typecheck
 and build passed with `Configuration=Release` in the environment. Release was used
@@ -180,3 +180,90 @@ with OFFSET/FETCH for paging. The temporary API was stopped after verification.
 Existing NuGet audit warnings for transitive System.Security.Cryptography.Pkcs 9.0.11
 remain; this change does not update dependencies. Stop the development API before
 running the default Debug build or tests to avoid Windows file-lock errors.
+
+
+## Task 2 progress: backend complete through Steps 2-7
+
+### Automatic triage
+
+POST /api/tickets applies the shared PriorityPolicy, SlaPolicy and AssignmentPolicy.
+The 201 response includes the saved priority, deadline and agent, plus a triage object
+containing appliedPriority, priorityReason, slaWindowHours, slaReason and assignmentReason.
+Nobody eligible is a normal success with assignedAgent null and an explanation.
+
+Sla configuration in appsettings.json supplies all priority windows, the Premium
+multiplier, minimum window and at-risk threshold. Values are validated at startup.
+Each new or escalated window snapshots its start and at-risk cutoff; changing the
+configuration affects future windows after restarting the API, not existing promises.
+No category-name checks determine priority or specialist eligibility.
+
+### Escalation API and history
+
+| Endpoint | Behavior |
+| --- | --- |
+| POST /api/tickets/{id}/escalate | Raises priority one level, recalculates the SLA from now, rechecks ownership eligibility and appends history |
+| GET /api/tickets/{id}/escalations | History newest first, with ID as a stable tie-breaker; 404 for an unknown ticket |
+| GET /api/tickets?slaStatus=Breached | Filters in SQL before counting and paging; all five SLA states are supported |
+
+Example escalation body for Task 2:
+
+```json
+{
+  "reason": "The customer's service is still unavailable.",
+  "escalatedBy": "alex.lead"
+}
+```
+
+Success returns 200 with the updated ticket, triage explanations and the saved
+escalation. Validation returns 400 for a trimmed reason outside 5-500 characters or
+a missing actor (maximum 100 characters). Unknown tickets return 404. Critical,
+Resolved and Closed tickets return 409 with an explanation. Concurrent ticket changes
+also return 409 and require a reload. Existing central ProblemDetails handling is reused.
+
+The current owner is retained only while active, specialized when required and
+strictly below MaxOpenTickets. The workload includes the current ticket, following
+the PDF's strict-below rule. Otherwise the same selection policy used by creation
+chooses the replacement, or leaves the ticket unassigned with a reason.
+
+Ticket update and history insertion are saved in one transaction. Revision is an
+optimistic concurrency token used by ticket mutations. History has private setters,
+EF guards and a SQL Server trigger rejecting UPDATE/DELETE. The composite index
+IX_TicketEscalations_Ticket_Time_Id supports lookup by ticket and stable newest-first
+ordering; restricted foreign keys preserve ticket and agent history.
+
+### SLA status and database migration
+
+SLA status is calculated, never stored. SlaEvaluator supplies one expression for
+both runtime evaluation and the SQL CASE predicate. An unresolved ticket is AtRisk
+at its cutoff and exactly at its deadline; one tick after the deadline it is Breached.
+Resolution on the deadline is Met. The list captures one IClock instant for filtering,
+counting and projection. Sorting by slaStatus also executes in SQL.
+
+The TicketEscalationAndSlaWindows migration adds TicketEscalations and ticket fields
+SlaStartedAtUtc, AtRiskAtUtc and Revision. Existing due dates are preserved; legacy
+cutoffs are initialized from creation with the original 25% threshold. Due-date-free
+tickets remain NotApplicable. The migration was applied to the configured local
+database. Development startup applies it automatically on another checkout, or run:
+
+```powershell
+npm run db:migrate
+```
+
+### Verification and remaining work
+
+- 189 backend tests and 18 frontend tests passed, including boundaries, assignment
+  reevaluation, history values/order, failed-save rollback, stale-update conflicts,
+  relational SLA filtering, SQL count/paging and the request serializer.
+- Lint, typecheck and the full build passed using Release configuration to avoid
+  the running development API's locked Debug files.
+- SQL Server checks verified both an empty database and upgrade of a legacy ticket.
+  Thirty real HTTP checks covered 201/200/400/404/409 responses, concurrent escalation,
+  history, SLA filters and sorting. Direct SQL history UPDATE and DELETE were rejected.
+  Disposable verification databases were removed afterward.
+
+Step 8 remains: the visible SLA filter, shared indicator, escalation form, history
+and triage summary. Transport methods and TypeScript types are ready. For Task 2,
+escalatedBy is supplied by the body; Task 3 must derive it from the authenticated user.
+The starter reference generator and cross-ticket capacity selection still use snapshots
+without global serialization. Existing NuGet audit warnings remain. Changes are
+uncommitted until Task 2 is ready for separate focused commits.
