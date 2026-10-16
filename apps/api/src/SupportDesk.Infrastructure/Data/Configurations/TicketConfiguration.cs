@@ -40,6 +40,12 @@ public sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         builder.Property(t => t.DueAtUtc).HasColumnType("datetime2(3)");
 
         builder.Property(t => t.ResolvedAtUtc).HasColumnType("datetime2(3)");
+        builder.Property(t => t.SlaStartedAtUtc).HasColumnType("datetime2(3)");
+        builder.Property(t => t.AtRiskAtUtc).HasColumnType("datetime2(3)");
+        builder.Property(t => t.Revision).IsConcurrencyToken();
+        builder.HasMany(t => t.Escalations).WithOne().HasForeignKey(e => e.TicketId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.Navigation(t => t.Escalations).UsePropertyAccessMode(PropertyAccessMode.Field);
 
         // A ticket is never silently detached from the rows that give it meaning.
         builder.HasOne<Customer>()

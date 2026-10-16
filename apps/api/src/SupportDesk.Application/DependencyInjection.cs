@@ -1,4 +1,6 @@
 using FluentValidation;
+using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
+using SupportDesk.Application.Features.Tickets.Queries.GetEscalations;
 using Microsoft.Extensions.DependencyInjection;
 using SupportDesk.Application.Features.Agents.Queries.GetAgents;
 using SupportDesk.Application.Features.Categories.Queries.GetCategories;
@@ -20,6 +22,8 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddScoped<RaiseTicketCommandHandler>();
+        services.AddScoped<EscalateTicketCommandHandler>();
+        services.AddScoped<GetEscalationsQueryHandler>();
         services.AddScoped<ChangeTicketStatusCommandHandler>();
         services.AddScoped<AssignTicketCommandHandler>();
         services.AddScoped<SearchTicketsQueryHandler>();

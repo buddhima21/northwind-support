@@ -35,4 +35,9 @@ public sealed class TicketDetailDto
 
     /// <summary>Derived from the dates above; never stored.</summary>
     public SlaStatus SlaStatus { get; set; }
+
+    /// <summary>Decision explanation on a mutation response; not a persisted ticket field.</summary>
+    public TriageResultDto? Triage { get; set; }
+
+    public TicketEscalationDto? Escalation { get; set; }
 }
