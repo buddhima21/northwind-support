@@ -17,7 +17,7 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy slaPolicy, ILogger<SupportDbSeeder> logger)
 {
     /// <summary>Seeds the database, unless it already has tickets in it.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
@@ -195,6 +195,9 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, ILogger<S
             entry.Property(t => t.UpdatedAtUtc).CurrentValue =
                 createdAtUtc.AddMinutes(row.ResolvedAfterMinutes ?? row.CreatedMinutesAgo / 2);
             entry.Property(t => t.DueAtUtc).CurrentValue = createdAtUtc.AddMinutes(row.SlaWindowMinutes);
+            entry.Property(t => t.SlaStartedAtUtc).CurrentValue = createdAtUtc;
+            entry.Property(t => t.AtRiskAtUtc).CurrentValue = createdAtUtc.AddMinutes(
+                row.SlaWindowMinutes * (1 - slaPolicy.AtRiskThresholdPercent / 100));
         }
     }
 

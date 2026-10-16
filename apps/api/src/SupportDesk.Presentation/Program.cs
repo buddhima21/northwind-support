@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using SupportDesk.Application;
+using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Infrastructure;
 using SupportDesk.Presentation.Extensions;
 using SupportDesk.Presentation.Filters;
@@ -26,6 +27,12 @@ builder.Services.AddCors(options => options.AddPolicy(
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Bind and validate the shared business configuration at startup. The policy itself
+// has no dependency on ASP.NET, configuration binding, or the database.
+var slaSettings = builder.Configuration.GetRequiredSection("Sla").Get<SlaSettings>()
+    ?? throw new InvalidOperationException("The Sla configuration section is missing.");
+builder.Services.AddSingleton(new SlaPolicy(slaSettings));
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);

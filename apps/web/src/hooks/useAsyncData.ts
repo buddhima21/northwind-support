@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toErrorMessage } from '../api/client';
 
 interface AsyncState<T> {
@@ -22,27 +22,34 @@ export interface AsyncData<T> extends AsyncState<T> {
  */
 export function useAsyncData<T>(load: () => Promise<T>, errorMessage: string): AsyncData<T> {
   const [state, setState] = useState<AsyncState<T>>({ isLoading: true });
+  const requestId = useRef(0);
 
   const run = useCallback(async () => {
+    const id = ++requestId.current;
     setState((current) => ({ ...current, isLoading: true, error: undefined }));
 
     try {
       const data = await load();
-      setState({ isLoading: false, data });
+      if (id === requestId.current) setState({ isLoading: false, data });
     } catch (error) {
-      setState((current) => ({
-        ...current,
-        isLoading: false,
-        error: toErrorMessage(error, errorMessage),
-      }));
+      if (id === requestId.current) {
+        setState((current) => ({
+          ...current,
+          isLoading: false,
+          error: toErrorMessage(error, errorMessage),
+        }));
+      }
     }
   }, [load, errorMessage]);
 
   useEffect(() => {
     void run();
+    // A refresh after escalation must not be overwritten by an older history read.
+    return () => { requestId.current += 1; };
   }, [run]);
 
   const setData = useCallback((value: T) => {
+    requestId.current += 1;
     setState({ isLoading: false, data: value });
   }, []);
 

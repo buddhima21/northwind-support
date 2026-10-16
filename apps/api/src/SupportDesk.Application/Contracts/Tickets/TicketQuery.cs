@@ -31,6 +31,8 @@ public sealed record TicketQuery
 
     public bool UnassignedOnly { get; init; }
 
+    public SlaStatus? SlaStatus { get; init; }
+
     /// <summary>createdAtUtc | updatedAtUtc | dueAtUtc | priority | status.</summary>
     public string SortBy { get; init; } = "createdAtUtc";
 
