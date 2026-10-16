@@ -87,7 +87,7 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. **Filters are accepted but not applied yet** (Task 1). |
+| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `sortBy`, `sortDirection`. Filters are combined in SQL before counting and paging (Task 1). |
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
@@ -107,3 +107,76 @@ and 40 tickets across every status, priority and SLA state.
 | Browser warns about the certificate | `dotnet dev-certs https --trust`, or use the web app, which proxies |
 | Web app shows "Unable to load tickets" | The API is not running, or `VITE_API_PROXY_TARGET` points at the wrong port |
 | SQL Server slow on Apple Silicon | Enable Rosetta in Docker Desktop → Settings → General |
+
+
+## Task 1 implementation
+
+### DEFECT-117: filters did not trigger a request
+
+The fetching effect in `useTicketList` depended only on search, page and page size.
+Changing another filter on page 1 therefore changed state without running the effect;
+typing in search later sent the previously selected filters.
+
+The hook now observes the complete request-filter object. Only search input is delayed
+by 300 ms; dropdowns, sorting and pagination request immediately. A future filter does
+not need a new effect dependency. Older responses cannot overwrite a newer result.
+While typing, dropdown changes use the last settled search; the final search text is
+sent after the debounce finishes. Clearing all filters is immediate.
+
+The regression test was run against the original hook: changing Status sent zero
+requests and the test failed. After the fix it passed. The tests inspect the actual
+fetch URL rather than mocking the ticket API, including each individual filter,
+search debounce, clearing search, pagination, retry, and out-of-order responses.
+
+### Server-side filtering
+
+`TicketQueries.ApplyFilters` builds an `IQueryable` with exact matches for status,
+priority, category, customer and assigned agent, plus unassigned-only and trimmed
+search across title, reference and customer name. Blank search is ignored. Every
+supplied filter is combined with AND, so choosing an agent and unassigned-only
+together gives zero matches. Search uses database string matching and collation.
+
+The filtered query feeds both `CountAsync` and the sorted, paged projection. No rows
+are loaded for in-memory filtering. Add future filters, including Task 2's SLA filter,
+to `ApplyFilters` so count and paging continue to use the same predicates.
+No schema change or migration is needed for Task 1; the existing indexes remain.
+
+The query tests use a fresh in-memory SQLite database per test with real EF queries.
+They cover every filter, all four priorities, combined filters, all search targets,
+blank/no-match searches and filtered pagination. A SQL-log assertion checks that the
+priority predicate occurs in both COUNT and the page SELECT before LIMIT, and that
+reads leave the change tracker empty. SQLite is a portable relational check; SQL Server
+uses its own collation and OFFSET/FETCH syntax.
+
+Run from the repository root:
+
+```powershell
+npm test
+npm run lint
+npm run typecheck
+npm run build
+```
+
+Manual verification: clear the browser Network log, change Status alone, and confirm
+a new `/api/tickets` request containing that status. Try High priority (only High,
+not Critical), combined filters, a customer-name search and pagination. In the API
+Development console, inspect the SQL: WHERE must restrict both COUNT and SELECT,
+and SELECT must apply paging after filtering. Restart the API after backend changes.
+
+For separate commits, group the frontend hook and its test as the defect fix; group
+the backend query, contract comment and query tests as server-side filtering.
+Commit documentation separately or with the relevant implementation.
+
+Task 2 escalation/triage, Task 3 authentication and Task 4 API containerization are
+not implemented by this change. See `APPROACH.md` for the Task 1 design decisions.
+
+Verification completed for Task 1: full backend and frontend tests, lint, typecheck
+and build passed with `Configuration=Release` in the environment. Release was used
+because the already-running development API locked its Debug assemblies. SQL Server
+was also checked through a temporary API using GET requests only: all individual
+filters, combined filters, customer search, no matches and filtered pagination matched
+the existing ticket data. Its logged SQL contained WHERE in COUNT and paged SELECT,
+with OFFSET/FETCH for paging. The temporary API was stopped after verification.
+Existing NuGet audit warnings for transitive System.Security.Cryptography.Pkcs 9.0.11
+remain; this change does not update dependencies. Stop the development API before
+running the default Debug build or tests to avoid Windows file-lock errors.
