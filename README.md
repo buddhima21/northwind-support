@@ -87,7 +87,7 @@ Both pass on a clean checkout and neither needs a database.
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `slaStatus`, `sortBy`, `sortDirection`. Filters are combined in SQL before counting and paging (Task 1). |
+| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `slaStatus`, `sortBy`, `sortDirection`. Filters are applied in SQL before counting and paging; see the implementation notes below. |
 | `GET /api/tickets/{id}` | One ticket |
 | `POST /api/tickets` | Create a ticket |
 | `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
@@ -108,162 +108,185 @@ and 40 tickets across every status, priority and SLA state.
 | Web app shows "Unable to load tickets" | The API is not running, or `VITE_API_PROXY_TARGET` points at the wrong port |
 | SQL Server slow on Apple Silicon | Enable Rosetta in Docker Desktop → Settings → General |
 
+---
 
-## Task 1 implementation
+## Candidate implementation
 
-### DEFECT-117: filters did not trigger a request
+This section records the work completed for this assessment against the supplied
+[assignment PDF](ASSIGNMENT_CANDIDATE.pdf). [APPROACH.md](APPROACH.md) explains the
+reasoning in more detail.
 
-The fetching effect in `useTicketList` depended only on search, page and page size.
-Changing another filter on page 1 therefore changed state without running the effect;
-typing in search later sent the previously selected filters.
+### Completed work
 
-The hook now observes the complete request-filter object. Only search input is delayed
-by 300 ms; dropdowns, sorting and pagination request immediately. A future filter does
-not need a new effect dependency. Older responses cannot overwrite a newer result.
-While typing, dropdown changes use the last settled search; the final search text is
-sent after the debounce finishes. Clearing all filters is immediate.
+| Task | Current status |
+| --- | --- |
+| Task 1: defect fix and server-side filtering | Implemented, tested and merged |
+| Task 2: ticket escalation and assignment | Backend and frontend implemented and verified |
+| Task 3: login and authentication | Not implemented yet |
+| Task 4: API containerization | Not implemented yet; Compose starts SQL Server only |
+| Optional SLA summary report | Deferred until Tasks 1-3 are complete |
 
-The regression test was run against the original hook: changing Status sent zero
-requests and the test failed. After the fix it passed. The tests inspect the actual
-fetch URL rather than mocking the ticket API, including each individual filter,
-search debounce, clearing search, pagination, retry, and out-of-order responses.
+### Task 1: defects and server-side filtering
 
-### Server-side filtering
+**DEFECT-117:** the ticket-list fetching effect observed search, page and page size
+but omitted the other filters. Changing Status on page 1 therefore changed the
+control without requesting new results. The hook now observes the complete filter
+object. Dropdowns request immediately; search alone is debounced by 300 ms. A request
+sequence prevents older responses replacing newer results. The status-only regression
+test failed against the original hook and passed after the fix.
 
-`TicketQueries.ApplyFilters` builds an `IQueryable` with exact matches for status,
-priority, category, customer and assigned agent, plus unassigned-only and trimmed
-search across title, reference and customer name. Blank search is ignored. Every
-supplied filter is combined with AND, so choosing an agent and unassigned-only
-together gives zero matches. Search uses database string matching and collation.
+**DEFECT-104 / priority filtering:** the starter API accepted filters without applying
+them. `TicketQueries.ApplyFilters` now combines exact-match priority, status, category,
+customer, agent, unassigned-only, search and SLA predicates with AND. High returns
+only High. Search matches title, reference or customer name using database collation.
+Filters precede both COUNT and sorted paging. Relational tests inspect generated SQL;
+SQL Server checks also verified results and paging. New filters belong in this same
+method so the count and returned page stay consistent.
 
-The filtered query feeds both `CountAsync` and the sorted, paged projection. No rows
-are loaded for in-memory filtering. Add future filters, including Task 2's SLA filter,
-to `ApplyFilters` so count and paging continue to use the same predicates.
-No schema change or migration is needed for Task 1; the existing indexes remain.
+To verify the defect fix, clear the browser Network log and change Status alone.
+A new `/api/tickets` request should contain the selected status. Check High priority,
+combined filters, customer-name search and pagination; inspect the API SQL log for
+WHERE in both COUNT and the paged SELECT.
 
-The query tests use a fresh in-memory SQLite database per test with real EF queries.
-They cover every filter, all four priorities, combined filters, all search targets,
-blank/no-match searches and filtered pagination. A SQL-log assertion checks that the
-priority predicate occurs in both COUNT and the page SELECT before LIMIT, and that
-reads leave the change tracker empty. SQLite is a portable relational check; SQL Server
-uses its own collation and OFFSET/FETCH syntax.
+### Task 2: business rules and frontend
 
-Run from the repository root:
+Creating a ticket now determines priority, deadline and owner automatically and returns
+human-readable triage reasons. Requested priority defaults to Medium; category flags
+can force Critical. Default SLA windows are Critical 4h, High 8h, Medium 24h and Low
+72h. Premium customers receive half the window, with a 1h minimum. Assignment selects
+active agents strictly below capacity, requiring specialization where the category
+specifies it. Fewest open tickets wins, then lowest ID. If nobody qualifies, creation
+still succeeds with an unassigned ticket and an explanation.
+
+Escalation raises priority one level, recalculates the deadline from the injected
+clock, keeps an eligible owner or reassigns, and saves immutable history. Critical,
+Resolved and Closed tickets return 409; missing tickets return 404. Trimmed reasons
+must contain 5-500 characters and actor identifiers 1-100. History is returned newest
+first with before/after priority, owner and deadline, reason, actor and time.
+
+SLA status is derived rather than stored: no deadline means No SLA; on-time resolution
+means Met; late resolution or an unresolved ticket past due means Breached. An
+unresolved ticket with 25% or less of its window remaining is At risk; otherwise it
+is Within SLA. Exactly at the deadline is At risk, and one tick after is Breached.
+The new `slaStatus` parameter filters in SQL before counting, sorting and paging.
+
+The UI uses one labelled SLA indicator on list and detail pages, an SLA filter,
+a validated escalation form, history and a create-time triage summary. It disables
+ineligible escalation and pending duplicate submissions, displays server errors and
+refreshes the saved ticket and history without a page reload. A 409 retains the draft
+and displayed ticket with an explicit reload action. History reads have their own
+loading, empty, error and retry states; stale reads cannot overwrite a refresh.
+
+### Design decisions and alternatives
+
+PriorityPolicy, SlaPolicy and AssignmentPolicy are plain domain policies shared by
+creation and escalation. Application handlers coordinate database queries and a single
+save; controllers handle HTTP. Database interfaces provide useful seams, while an
+interface for every pure policy, event sourcing and a new frontend state library
+would add complexity without helping these requirements.
+
+SLA values live in shared `appsettings.json`, with environment overrides and startup
+validation, so all environments receive the same defaults. Category flags replace
+name-based checks. Windows snapshot their deadline and at-risk cutoff; configuration
+changes affect future windows after restart. One expression supplies both runtime
+SLA evaluation and SQL predicates. The current ticket counts toward its owner's
+capacity when checking eligibility, following the strict-below requirement.
+
+### Database and API changes
+
+Migration `20261016094553_TicketEscalationAndSlaWindows` adds TicketEscalations and
+ticket fields `SlaStartedAtUtc`, `AtRiskAtUtc` and concurrency token `Revision`.
+It preserves legacy deadlines and backfills cutoffs using the original 25% threshold.
+History has configured keys, required values, length limits and restricted foreign
+keys. `IX_TicketEscalations_Ticket_Time_Id` supports lookup by ticket and stable
+newest-first ordering. EF guards and a SQL Server UPDATE/DELETE trigger protect
+history. Ticket updates and history insertions share one transaction; stale revisions
+return 409. Development startup applies migrations, or run `npm run db:migrate`.
+
+| Endpoint | Added behavior |
+| --- | --- |
+| `POST /api/tickets` | 201 with saved ticket and triage explanations |
+| `POST /api/tickets/{id}/escalate` | 200 with saved ticket, triage and recorded escalation |
+| `GET /api/tickets/{id}/escalations` | Newest-first history; 404 for an unknown ticket |
+| `GET /api/tickets?slaStatus=Breached` | SQL filtering with matching count and pagination |
+
+Example escalation body:
+
+```json
+{"reason":"Customer cannot continue working.","escalatedBy":"alex.lead"}
+```
+
+### Setup, authentication and Docker status
+
+Use the original Quick start above and wait for SQL Server to become healthy before
+starting the API. Default SQL credentials are `sa` / `Local_Dev_Password1`, a local
+fixture, not an application login. Compose reads `.env`; `dotnet run` does not load
+it automatically. Set `$env:ConnectionStrings__Default` in the API terminal to
+override its database connection. Never commit `.env` or real credentials.
+
+Task 3 is pending: there is no login screen, password hashing, JWT issuance/storage,
+token lifetime or development application login yet. For Task 2, `escalatedBy` comes
+from the form/request body; authentication must replace it with the token identity.
+Task 4 is also pending: there is no API image, image-size measurement or container
+migration workflow to report. The existing Compose service runs SQL Server, and the
+API runs through the .NET SDK.
+
+### Testing and verification
+
+Run these commands from the repository root. Release avoids Windows Debug assembly
+locks if the development API is running:
 
 ```powershell
+$env:Configuration = 'Release'
 npm test
 npm run lint
 npm run typecheck
 npm run build
 ```
 
-Manual verification: clear the browser Network log, change Status alone, and confirm
-a new `/api/tickets` request containing that status. Try High priority (only High,
-not Critical), combined filters, a customer-name search and pagination. In the API
-Development console, inspect the SQL: WHERE must restrict both COUNT and SELECT,
-and SELECT must apply paging after filtering. Restart the API after backend changes.
+Verification on 2026-10-16 passed **185 backend unit/integration tests, 4 architecture
+tests and 45 frontend tests**, lint, typecheck, full build and whitespace checks.
+EF confirmed no model changes missing from the migration. Backend tests use FixedClock,
+TicketBuilder and isolated SQLite databases to cover priorities/tiers, the SLA floor,
+assignment eligibility/ties, escalation/rejections, rollback, concurrency, history and
+exact SLA boundaries. SQL tests check filtering before count and paging. Frontend tests
+use the real API client with mocked HTTP to cover validation, 409 preserving the
+screen, pending submissions, refresh/retry, SLA labels and triage outcomes.
 
-For separate commits, group the frontend hook and its test as the defect fix; group
-the backend query, contract comment and query tests as server-side filtering.
-Commit documentation separately or with the relevant implementation.
+Final live checks passed 29 assertions for SLA/priority filters, paging and 400/404/409
+responses. Browser checks confirmed At risk filtering, detail indicators, short-reason
+validation and disabled escalation. Earlier disposable SQL Server checks covered empty
+and legacy database migrations, successful creation/escalation, concurrency and history
+immutability. No successful mutations were performed in the final review pass.
 
-Task 1 covers filtering. Task 2 progress is documented below; authentication
-and API containerization remain later assessment tasks. See `APPROACH.md` for the Task 1 design decisions.
+A permanent end-to-end browser suite and load/global capacity-reservation tests were
+not added; page tests cover UI save/error flows, and global reservation is outside
+this implementation. For a manual check, create a Security ticket for a Premium
+customer and inspect Critical/2h triage. Escalate an eligible ticket and refresh to
+check persistence. Open the same High ticket in two tabs, escalate in the first and
+submit from the unrefreshed second: expect 409, then use Reload ticket.
 
-Verification completed for Task 1: full backend and frontend tests, lint, typecheck
-and build passed with `Configuration=Release` in the environment. Release was used
-because the already-running development API locked its Debug assemblies. SQL Server
-was also checked through a temporary API using GET requests only: all individual
-filters, combined filters, customer search, no matches and filtered pagination matched
-the existing ticket data. Its logged SQL contained WHERE in COUNT and paged SELECT,
-with OFFSET/FETCH for paging. The temporary API was stopped after verification.
-Existing NuGet audit warnings for transitive System.Security.Cryptography.Pkcs 9.0.11
-remain; this change does not update dependencies. Stop the development API before
-running the default Debug build or tests to avoid Windows file-lock errors.
+### AI usage
 
+Codex assisted with planning, implementation, tests, debugging, SQL checks and docs.
+A useful workflow was implementing small pieces against the PDF and checking each
+with relational tests and HTTP calls. The generated deterministic policy structure
+was retained largely as-is. A generated history query was changed after relational
+tests exposed an EF translation failure: filtering and sorting now happen before DTO
+projection. Review also found an older history request could overwrite refreshed data;
+request guards and regression tests fix it. Generated code was checked through tests,
+types, lint, builds, SQL/HTTP assertions and browser checks. The candidate must review
+and be able to explain the submitted code.
 
-## Task 2 progress: backend complete through Steps 2-7
+### Known limitations and remaining submission work
 
-### Automatic triage
+Authentication and API packaging remain unfinished; the actor is caller-supplied.
+Assignment uses a workload snapshot, so simultaneous different tickets can exceed
+capacity. The starter reference generator retains its concurrency limitation. History
+stores agent IDs, so displayed names reflect current agent names. Triage reasons are
+returned for create/escalate operations and are not persisted for later GET requests.
+The optional SLA report remains deferred. Existing NU1902/NU1903 warnings for transitive
+`System.Security.Cryptography.Pkcs` 9.0.11 remain; Task 2 changed no dependencies.
 
-POST /api/tickets applies the shared PriorityPolicy, SlaPolicy and AssignmentPolicy.
-The 201 response includes the saved priority, deadline and agent, plus a triage object
-containing appliedPriority, priorityReason, slaWindowHours, slaReason and assignmentReason.
-Nobody eligible is a normal success with assignedAgent null and an explanation.
-
-Sla configuration in appsettings.json supplies all priority windows, the Premium
-multiplier, minimum window and at-risk threshold. Values are validated at startup.
-Each new or escalated window snapshots its start and at-risk cutoff; changing the
-configuration affects future windows after restarting the API, not existing promises.
-No category-name checks determine priority or specialist eligibility.
-
-### Escalation API and history
-
-| Endpoint | Behavior |
-| --- | --- |
-| POST /api/tickets/{id}/escalate | Raises priority one level, recalculates the SLA from now, rechecks ownership eligibility and appends history |
-| GET /api/tickets/{id}/escalations | History newest first, with ID as a stable tie-breaker; 404 for an unknown ticket |
-| GET /api/tickets?slaStatus=Breached | Filters in SQL before counting and paging; all five SLA states are supported |
-
-Example escalation body for Task 2:
-
-```json
-{
-  "reason": "The customer's service is still unavailable.",
-  "escalatedBy": "alex.lead"
-}
-```
-
-Success returns 200 with the updated ticket, triage explanations and the saved
-escalation. Validation returns 400 for a trimmed reason outside 5-500 characters or
-a missing actor (maximum 100 characters). Unknown tickets return 404. Critical,
-Resolved and Closed tickets return 409 with an explanation. Concurrent ticket changes
-also return 409 and require a reload. Existing central ProblemDetails handling is reused.
-
-The current owner is retained only while active, specialized when required and
-strictly below MaxOpenTickets. The workload includes the current ticket, following
-the PDF's strict-below rule. Otherwise the same selection policy used by creation
-chooses the replacement, or leaves the ticket unassigned with a reason.
-
-Ticket update and history insertion are saved in one transaction. Revision is an
-optimistic concurrency token used by ticket mutations. History has private setters,
-EF guards and a SQL Server trigger rejecting UPDATE/DELETE. The composite index
-IX_TicketEscalations_Ticket_Time_Id supports lookup by ticket and stable newest-first
-ordering; restricted foreign keys preserve ticket and agent history.
-
-### SLA status and database migration
-
-SLA status is calculated, never stored. SlaEvaluator supplies one expression for
-both runtime evaluation and the SQL CASE predicate. An unresolved ticket is AtRisk
-at its cutoff and exactly at its deadline; one tick after the deadline it is Breached.
-Resolution on the deadline is Met. The list captures one IClock instant for filtering,
-counting and projection. Sorting by slaStatus also executes in SQL.
-
-The TicketEscalationAndSlaWindows migration adds TicketEscalations and ticket fields
-SlaStartedAtUtc, AtRiskAtUtc and Revision. Existing due dates are preserved; legacy
-cutoffs are initialized from creation with the original 25% threshold. Due-date-free
-tickets remain NotApplicable. The migration was applied to the configured local
-database. Development startup applies it automatically on another checkout, or run:
-
-```powershell
-npm run db:migrate
-```
-
-### Verification and remaining work
-
-- 189 backend tests and 18 frontend tests passed, including boundaries, assignment
-  reevaluation, history values/order, failed-save rollback, stale-update conflicts,
-  relational SLA filtering, SQL count/paging and the request serializer.
-- Lint, typecheck and the full build passed using Release configuration to avoid
-  the running development API's locked Debug files.
-- SQL Server checks verified both an empty database and upgrade of a legacy ticket.
-  Thirty real HTTP checks covered 201/200/400/404/409 responses, concurrent escalation,
-  history, SLA filters and sorting. Direct SQL history UPDATE and DELETE were rejected.
-  Disposable verification databases were removed afterward.
-
-Step 8 remains: the visible SLA filter, shared indicator, escalation form, history
-and triage summary. Transport methods and TypeScript types are ready. For Task 2,
-escalatedBy is supplied by the body; Task 3 must derive it from the authenticated user.
-The starter reference generator and cross-ticket capacity selection still use snapshots
-without global serialization. Existing NuGet audit warnings remain. Changes are
-uncommitted until Task 2 is ready for separate focused commits.
+Keep the separate implementation commits and include the actual time spent with the
+final submission. The original effort estimates above are not a record of time spent.
