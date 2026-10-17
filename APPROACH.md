@@ -23,3 +23,9 @@ The frontend shares one token-aware client and session store. sessionStorage pre
 The root-context Dockerfile restores dependency metadata before copying source, then publishes into a smaller ASP.NET runtime running as `app` on HTTP 8080. Ignore rules exclude local credentials and host outputs. Compose publishes localhost:5080, injects settings at runtime and waits for healthy SQL. Existing Development startup handles migrations/seeding; production should use a controlled migration job instead.
 
 An anonymous database-aware `/health` returns 200 or 503 without weakening business endpoint authentication. Verification used a separate empty volume: three migrations, 40 seeded tickets, successful login, restart persistence and frontend proxy checks passed. Restore caching and non-root execution were verified; the runtime image measured 433.8 MiB against the 1243.4 MiB SDK baseline. Temporary resources were removed without deleting the existing development database.
+
+## Optional — SLA summary report
+
+The protected report groups by current agent or priority and calculates counts, breach rate and average resolution hours in one database aggregation. It inlines the existing SLA expression, avoiding duplicated status rules. Date bounds select creation time in UTC using an inclusive start and exclusive end. Unassigned/no-SLA tickets remain visible; unresolved tickets do not contribute to the average. No schema or frontend changes were needed.
+
+Eight relational/validation tests and seven HTTP cases cover grouping, all SLA states, fractional/long resolution times, date boundaries, empty results, authentication and invalid input. SQL logs verify GROUP BY/COUNT/AVG before materialization. A temporary API also checked both groupings against all 41 existing tickets on SQL Server without writes or seeding. All 227 backend tests passed; the previously verified frontend remains unchanged. The temporary API was stopped afterwards.

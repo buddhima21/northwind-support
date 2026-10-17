@@ -46,6 +46,7 @@ public static class DependencyInjection
 
         services.AddScoped<ITicketQueries, TicketQueries>();
         services.AddScoped<ITicketEscalationQueries, TicketEscalationQueries>();
+        services.AddScoped<ISlaReportQueries, SlaReportQueries>();
         services.AddScoped<ICustomerQueries, CustomerQueries>();
         services.AddScoped<IAgentQueries, AgentQueries>();
         services.AddScoped<IAgentAssignmentQueries, AgentAssignmentQueries>();

@@ -1,6 +1,6 @@
 # Northwind Support Desk
 
-.NET 10 API, React 19/TypeScript and SQL Server. Tasks 1–4 are implemented against [the assessment](ASSIGNMENT_CANDIDATE.pdf). [APPROACH.md](APPROACH.md) summarises each task.
+.NET 10 API, React 19/TypeScript and SQL Server. Tasks 1–4 and the optional SLA summary report are implemented against [the assessment](ASSIGNMENT_CANDIDATE.pdf). [APPROACH.md](APPROACH.md) summarises each task.
 
 ## What I implemented
 
@@ -21,6 +21,8 @@ DEFECT-117 occurred because fetch-effect dependencies omitted dropdown filters. 
 ## Filtering
 
 `TicketQueries.ApplyFilters` composes EF predicates before COUNT, sorting and paging. Exact matches, unassigned-only, trimmed title/reference/customer search and SLA predicates combine with AND. Relational SQLite tests inspect COUNT/page SQL, and SQL Server development logs were checked during live requests. Add the next predicate in this method, extend the query/client filter contract and add a relational test; no client-side row filtering is needed.
+
+The authenticated optional endpoint `/api/reports/sla-summary?from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z&groupBy=agent` performs one SQL aggregation; `priority` is the other grouping. Dates are optional and filter creation time using inclusive From/exclusive To, normalized to UTC. Agent is the default grouping and uses the current owner (null means unassigned). Counts include every SLA state; `breachRate` is breached/total (0–1). `averageResolutionHours` averages resolved tickets only, or is null. SLA is evaluated now, not historically at To. Invalid grouping/ranges return 400; empty results return `[]`.
 
 ## Authentication
 
@@ -64,6 +66,22 @@ In a second terminal, run `$env:VITE_API_PROXY_TARGET = 'http://localhost:5043'`
 
 Stop the frontend/host API with Ctrl+C and stop the Compose backend with `docker compose down`. This retains the SQL volume. Do not use `down -v` unless you intend to delete its data.
 
+### View the optional SLA report
+
+After Docker startup above, reviewers can paste this into PowerShell to log in and display the report:
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri 'http://localhost:5080/api/auth/login' `
+    -ContentType 'application/json' `
+    -Body '{"email":"alex.turner@northwind.com","password":"northwind_alexturner"}'
+
+Invoke-RestMethod -Uri 'http://localhost:5080/api/reports/sla-summary?groupBy=agent' `
+    -Headers @{ Authorization = "Bearer $($login.accessToken)" } |
+    Format-Table agentName,totalTickets,breached,atRisk,withinSla,met,averageResolutionHours
+```
+
+For priority groups, change `groupBy=agent` to `groupBy=priority` and the table column `agentName` to `priority`. Add optional `from`/`to` UTC dates to the URL to limit the creation period. This is an authenticated API report: opening its URL without a bearer token returns 401. Full JSON also includes `notApplicable` and `breachRate`; use `ConvertTo-Json` instead of `Format-Table` to see every field.
+
 ## Docker
 
 Use the startup commands above. To check backend readiness and the container user:
@@ -91,14 +109,14 @@ npm run typecheck
 npm run build
 ```
 
-Last recorded verification passed **289 tests**: 186 backend unit/integration, four architecture, 22 HTTP and 77 frontend. FixedClock/TicketBuilder and isolated SQLite cover rule boundaries, SQL, transactions, concurrency, history, authentication and session races without external SQL. Live SQL/browser checks covered authentication and escalation. Manual Docker verification covered empty-volume migration/seeding, persistence, restore caching, non-root execution, 200/503 health and the frontend proxy. Docker automation, load testing and out-of-scope account features were deliberately excluded.
+Recorded verification covers **304 tests**: 194 backend unit/integration, four architecture, 29 HTTP and 77 frontend. FixedClock/TicketBuilder and isolated SQLite cover rule boundaries, SQL, transactions, concurrency, history, authentication and session races without external SQL. Report tests verify one aggregation per request, grouping, UTC boundaries, all SLA states and nullable averages; live SQL Server results also matched ticket data. Live SQL/browser checks covered authentication and escalation. Manual Docker checks covered empty-volume migration/seeding, persistence, caching, non-root execution, health and the frontend proxy. Docker automation, load testing and out-of-scope account features were deliberately excluded.
 
 ## AI usage
 
-I used OpenAI Cluade for code/test drafts, Chatgpt for debugging, SQL/browser checks, documentation and explanations. The useful workflow was one requirement, a small change, then diff review and verification before committing. I retained much of the generated shared-policy structure because it reused rules without framework dependencies in the domain.
+I used Claude for code/test drafts and OpenAI Codex/ChatGPT for implementation, debugging, SQL/browser checks, documentation and explanations. The useful workflow was one requirement, a small change, then diff review and verification before committing. I retained much of the generated shared-policy structure because it reused rules without framework dependencies in the domain.
 
 I changed a generated escalation-history query after relational tests exposed an EF translation failure: filtering/ordering now happen before DTO projection. HTTP tests also exposed JWT configuration being resolved before test-host overrides; resolution moved to the built host while preserving startup validation. Generated code was checked with tests, SQL output, lint, type checking, builds, live API/browser checks and Docker inspection. These corrections were part of verification, not reasons to accept generated output without review.
 
 ## Known limitations
 
-The optional SLA report is deferred. Assignment uses a workload snapshot and can exceed capacity under concurrent ticket creation; the starter reference generator also has a concurrency limitation. Triage reasons are returned but not persisted. Logout affects the current tab and does not revoke copied JWTs; refresh tokens, registration, password reset and roles are out of scope. `/health` checks connectivity, not schema completeness. Existing NU1902/NU1903 vulnerability warnings for transitive `System.Security.Cryptography.Pkcs` 9.0.11 remain unresolved.
+Assignment uses a workload snapshot and can exceed capacity under concurrent ticket creation; the starter reference generator also has a concurrency limitation. Triage reasons are returned but not persisted. Logout affects the current tab and does not revoke copied JWTs; refresh tokens, registration, password reset and roles are out of scope. `/health` checks connectivity, not schema completeness. The optional report is API-only and reflects current assignment/SLA rather than historical snapshots. Existing NU1902/NU1903 vulnerability warnings for transitive `System.Security.Cryptography.Pkcs` 9.0.11 remain unresolved.
