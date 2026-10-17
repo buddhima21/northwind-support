@@ -95,6 +95,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+// Container probes have no agent credentials; explicitly exempt health from the fallback policy.
+app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();
 

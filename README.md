@@ -1,8 +1,8 @@
 # Northwind Support Desk
 
 .NET 10 Web API, React 19/TypeScript and SQL Server. Tasks 1-3 are implemented.
-Task 4 is in progress: the API Dockerfile/build context are added; Compose integration
-and database health reporting are next. The optional SLA report is deferred.
+Task 4 is in progress: the API Dockerfile/build context and database health endpoint
+are added; Compose integration is next. The optional SLA report is deferred.
 Requirements: [assessment PDF](ASSIGNMENT_CANDIDATE.pdf). Design reasoning, verification
 and the step-by-step record are in [APPROACH.md](APPROACH.md).
 
@@ -65,8 +65,8 @@ output, runs as the image's non-root `app` user, and exposes HTTP port 8080.
 The root .dockerignore admits only API sources and required .NET metadata. It excludes
 host build outputs, the React app, .git, .env files, environment-specific appsettings,
 launch settings and certificates. Shared appsettings.json stays for the SLA defaults;
-database, JWT and environment settings must be supplied at runtime. The next steps
-add `/health` and Compose wiring for the database/configuration.
+database, JWT and environment settings must be supplied at runtime. Step 2 adds
+`/health` below; Compose wiring for the database/configuration follows next.
 
 Step 1 verification: the image built successfully; `whoami` returned `app` (UID
 1654), no SDK was installed, and only shared appsettings.json was published. An
@@ -77,6 +77,35 @@ Restore/publish reported NU1902/NU1903 warnings for the existing transitive
 System.Security.Cryptography.Pkcs 9.0.11 dependency; this Docker step does not resolve
 those dependency warnings. Full container startup with SQL is verified in the
 later Compose step.
+
+## Database health: Task 4, step 2
+
+Restart the local API (`npm run api`) to load this change, then run:
+
+```powershell
+curl.exe -i http://localhost:5043/health
+curl.exe -i http://localhost:5043/api/tickets
+```
+
+With SQL running, `/health` returns HTTP 200 with plain-text `Healthy`, without a
+token. The ticket request still returns 401 without a token. When the configured
+database cannot be reached, `/health` returns HTTP 503 with `Unhealthy`. The response
+does not expose connection strings or exception details.
+
+The Infrastructure health check calls EF Core's CanConnectAsync without reading or
+changing tickets. It has a five-second cancellation timeout. The endpoint is mapped
+centrally with AllowAnonymous, preserving the fallback authentication policy for
+business endpoints. This checks connectivity, not schema completeness or seed data.
+It uses the built-in health-check framework without adding a NuGet dependency.
+
+Verification used temporary API instances with Development startup disabled: the
+existing SQL database returned 200/Healthy, and a separate configuration pointing to
+an unreachable SQL port returned 503/Unhealthy (about two seconds each). Both still
+returned 401 for anonymous ticket requests; an invalid bearer token did not block
+the anonymous health probe. Neither instance migrated or seeded data, and both were
+stopped afterwards. All 212 existing backend tests passed in Release. The previously
+documented NU1902/NU1903 dependency warnings remain. The container/Compose startup
+check is still pending the next step.
 
 ## What changed
 
@@ -214,8 +243,8 @@ now occurs against the built host. Redirect validation was tightened for encoded
 trailing-slash login paths. I verified generated code with tests, types, lint, builds,
 SQL checks and browser checks, and must be able to explain the submitted code.
 
-Task 4 remains unfinished: an API image is added, while Compose still runs SQL Server
-only and `/health` is pending. A real deployment should run migrations as a controlled deployment job,
+Task 4 remains unfinished: an API image and database-aware `/health` endpoint are added,
+while Compose still runs SQL Server only. A real deployment should run migrations as a controlled deployment job,
 not rely on Development startup/seeding. The optional report is deferred. Cross-ticket
 assignment uses a workload snapshot and can exceed capacity under simultaneous creates;
 the reference generator retains its concurrency limitation. Triage reasons are returned

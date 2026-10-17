@@ -10,6 +10,7 @@ using SupportDesk.Infrastructure.Queries;
 using SupportDesk.Infrastructure.Repositories;
 using SupportDesk.Infrastructure.Services;
 using SupportDesk.Infrastructure.Authentication;
+using SupportDesk.Infrastructure.Health;
 
 namespace SupportDesk.Infrastructure;
 
@@ -32,6 +33,9 @@ public static class DependencyInjection
         });
 
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<SupportDbContext>());
+
+        services.AddHealthChecks()
+            .AddCheck<DatabaseHealthCheck>("database", timeout: TimeSpan.FromSeconds(5));
 
         services.AddSingleton<IClock, SystemClock>();
 

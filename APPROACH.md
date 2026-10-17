@@ -295,3 +295,29 @@ API image measured 454,867,171 bytes (433.8 MiB), versus 1,303,849,665 bytes
 transfer was 221.69 kB. Restore and publish succeeded with existing NU1902/NU1903
 warnings for transitive System.Security.Cryptography.Pkcs 9.0.11; dependency
 remediation remains outstanding. Container startup against SQL awaits Compose.
+
+## Task 4, step 2: anonymous database health endpoint
+
+DK-7 requires database reachability, rather than a fixed success response. I added
+DatabaseHealthCheck in Infrastructure beside the persistence implementation. It uses
+the existing scoped SupportDbContext and CanConnectAsync with cancellation, so it
+does not query or change business records. AddInfrastructure registers it with the
+built-in health-check framework and a five-second cancellation timeout. No packages,
+migrations, controllers or frontend changes were needed.
+
+Program maps /health with AllowAnonymous in the central endpoint setup. The fallback
+authorization policy still protects controllers. The default framework response is
+plain-text Healthy with HTTP 200, or Unhealthy with HTTP 503; exception/connection
+details stay out of the public response. This is a connectivity check, not a check of
+schema readiness or seeded records.
+
+I verified the Release API in temporary non-Development instances: the existing SQL
+connection returned 200/Healthy, while an unreachable SQL address returned
+503/Unhealthy, each in about two seconds. Anonymous ticket requests returned 401 in
+both instances, and an invalid bearer token did not prevent a healthy anonymous
+probe. No migrations or seeding ran, and both temporary processes were stopped.
+All 212 existing backend tests passed (186 unit/integration, 4 architecture, 22 HTTP).
+The existing Pkcs dependency warnings remain; no new automated tests were added for
+Task 4, consistent with the PDF's manual-verification guidance. The running developer
+API must be restarted to expose the new endpoint. Compose integration follows in the
+next separate commit.
