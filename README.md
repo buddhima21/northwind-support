@@ -122,7 +122,7 @@ reasoning in more detail.
 | --- | --- |
 | Task 1: defect fix and server-side filtering | Implemented, tested and merged |
 | Task 2: ticket escalation and assignment | Backend and frontend implemented and verified |
-| Task 3: login and authentication | Steps 1-2: credentials, login/JWT and authenticated `/me`; global protection and UI pending |
+| Task 3: login and authentication | Steps 1-3: credentials, login/JWT, central API protection and authenticated escalation actor; login/session UI pending |
 | Task 4: API containerization | Not implemented yet; Compose starts SQL Server only |
 | Optional SLA summary report | Deferred until Tasks 1-3 are complete |
 
@@ -161,7 +161,8 @@ still succeeds with an unassigned ticket and an explanation.
 Escalation raises priority one level, recalculates the deadline from the injected
 clock, keeps an eligible owner or reassigns, and saves immutable history. Critical,
 Resolved and Closed tickets return 409; missing tickets return 404. Trimmed reasons
-must contain 5-500 characters and actor identifiers 1-100. History is returned newest
+must contain 5-500 characters; the actor is now the authenticated agent's stable ID.
+History is returned newest
 first with before/after priority, owner and deadline, reason, actor and time.
 
 SLA status is derived rather than stored: no deadline means No SLA; on-time resolution
@@ -213,7 +214,7 @@ return 409. Development startup applies migrations, or run `npm run db:migrate`.
 Example escalation body:
 
 ```json
-{"reason":"Customer cannot continue working.","escalatedBy":"alex.lead"}
+{"reason":"Customer cannot continue working."}
 ```
 
 ### Setup, authentication and Docker status
@@ -225,9 +226,9 @@ it automatically. Set `$env:ConnectionStrings__Default` in the API terminal to
 override its database connection. Never commit `.env` or real credentials.
 
 Task 3 is in progress: password storage, development seeding, login/JWT issuance and
-authenticated `/api/auth/me` are implemented. Global endpoint protection, login UI and
-browser token storage are pending. For Task 2, `escalatedBy` comes
-from the form/request body; authentication must replace it with the token identity.
+authenticated `/api/auth/me`, central endpoint protection and the authenticated escalation
+actor are implemented. Login UI and browser token storage are pending. `escalatedBy`
+is derived from the validated token and cannot be selected in the request body.
 Task 4 is also pending: there is no API image, image-size measurement or container
 migration workflow to report. The existing Compose service runs SQL Server, and the
 API runs through the .NET SDK.
@@ -281,8 +282,8 @@ no refresh tokens. The returned expiry matches the token's second-precision expi
 `GET /api/auth/me` requires `Authorization: Bearer <accessToken>`. Middleware checks
 signature, algorithm, issuer, audience and lifetime. The endpoint then fetches the
 active agent by `sub`, so deactivating an agent also blocks `/me`. Password hashes
-are never returned. Other endpoints are still open until Step 3; Step 3 will also
-replace the caller-supplied escalation actor with the authenticated identity.
+are never returned. Step 3 now protects every other API endpoint centrally and records
+the authenticated identity on escalation (see below).
 
 `Jwt` configuration contains `Issuer`, `Audience`, `SigningKey` and `LifetimeMinutes`.
 Startup rejects missing issuer/audience, a key shorter than 32 UTF-8 bytes, or a
@@ -313,6 +314,47 @@ Step 2 verification on 2026-10-17 passed 188 backend unit/integration tests, fou
 architecture tests and 14 HTTP authentication tests (206 total). The API and test
 projects built in Release and whitespace checks passed. NuGet audit completed after
 refreshing restore metadata; only the previously documented Pkcs warnings remain.
+
+#### Task 3, step 3: central authorization and trustworthy escalation actors
+
+One fallback authorization policy in Program requires an authenticated user on every
+endpoint unless explicitly anonymous. `/api/auth/login` remains anonymous. Development
+Swagger middleware runs before authorization and remains open. A future `/health`
+endpoint must explicitly opt out when Task 4 adds it. CORS preflight is handled before
+authentication. No list of per-controller authorization attributes is needed.
+
+After checking the JWT signature and claims, bearer authentication verifies that `sub`
+is a positive agent ID and that the agent still exists and is active. Deactivating an
+agent therefore rejects their existing token on all protected calls. This adds one
+small database lookup per authenticated request; database outages remain server errors.
+
+Escalation accepts only `{ "reason": "..." }`. The controller takes the agent ID from
+the validated principal and passes it separately to the application handler. History
+stores `agent:<id>` (for example `agent:1`) in the existing 100-character EscalatedBy
+column. This stable identifier survives name/email changes and avoids truncating a
+256-character email. Existing history is preserved as originally recorded. The domain
+still validates its actor value; the HTTP request validator only validates the reason.
+Extra legacy JSON fields such as `escalatedBy` are ignored and cannot select the actor.
+The form and TypeScript payload no longer offer or submit an actor field.
+
+HTTP tests check all existing endpoint methods against missing, malformed and expired
+tokens, ensure valid tokens can read each resource, and verify fallback protection on
+a test-only new controller without an authorization attribute. Forged actor tests log
+in as two agents and check the response, history endpoint and stored history row. They
+also check invalid/missing subject IDs, deactivated users, and unchanged 400/404/409
+escalation behavior. The test-only controller is not included in the production app.
+
+At this intermediate commit, the API requires tokens but the browser login/session
+flow is not implemented yet. Use the PowerShell login example above to call protected
+endpoints until Step 4 adds token handling to the shared frontend API client.
+
+Step 3 verification on 2026-10-17 passed 184 backend unit/integration tests, four
+architecture tests, 22 HTTP tests and 43 frontend tests. Backend test counts dropped
+by four and frontend counts by two because caller-supplied actor validation is no
+longer part of the contract; HTTP tests now cover trusted identity and forgery instead.
+Web lint, TypeScript checking, the production web build, Release API/test builds and
+whitespace checks passed. Existing dependency warnings remain. The checks used
+isolated SQLite databases and did not change the local SQL Server data.
 
 ### Testing and verification
 
@@ -363,7 +405,8 @@ and be able to explain the submitted code.
 
 ### Known limitations and remaining submission work
 
-Authentication and API packaging remain unfinished; the actor is caller-supplied.
+Frontend authentication and API packaging remain unfinished. The API now requires a
+token, so the web app needs the next login/session step before normal browser use works.
 Assignment uses a workload snapshot, so simultaneous different tickets can exceed
 capacity. The starter reference generator retains its concurrency limitation. History
 stores agent IDs, so displayed names reflect current agent names. Triage reasons are

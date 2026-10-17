@@ -59,7 +59,8 @@ Creation returns the saved priority, deadline, owner and triage reasons.
 Escalation raises priority one level and recalculates the deadline from the injected
 clock. It keeps the current owner if still eligible; otherwise it applies the same
 assignment policy. Critical, Resolved and Closed tickets are rejected with 409.
-Reasons and actor identifiers are validated, and the current ticket counts toward
+Reasons are validated; Task 3 now supplies the actor from the authenticated agent.
+The current ticket counts toward
 its owner's capacity when checking eligibility.
 
 The migration adds immutable escalation history and ticket timing fields. Ticket
@@ -99,7 +100,7 @@ translation; relational tests exposed it, and filtering was moved before project
 I avoided extra policy interfaces, event sourcing and a new frontend state library
 because the existing boundaries were sufficient. Cross-ticket assignment remains a
 workload snapshot, and the starter reference generator retains its concurrency
-limitation. The actor is caller-supplied until Task 3 adds authentication. The optional
+limitation. Task 3 now supplies the escalation actor from the token identity. The optional
 SLA summary report remains deferred. Existing dependency warnings are documented in
 README.md.
 
@@ -147,9 +148,37 @@ HTTP integration tests use the real middleware and controllers with isolated SQL
 databases and the existing FixedClock. They exposed an early configuration-binding
 problem: test-host overrides were applied after Program first read JWT settings. I
 moved resolution to the built host and retained startup validation before requests.
-Global authorization and the escalation actor remain the next separate commit.
+Global authorization and the escalation actor were implemented in the following step.
 
 Step 2 verification passed all 14 HTTP tests, 188 existing backend tests and four
 architecture tests. Test hosting also required resolving the database connection string
 when configuring DbContext rather than before the host could replace its provider.
 No database migration was needed in this step; the credential column is from Step 1.
+
+## Task 3, step 3: central protection and authenticated history
+
+I used a fallback authorization policy so future endpoints are protected automatically.
+Login opts out explicitly; Development Swagger stays ahead of authorization in the
+middleware pipeline. Bearer validation also checks the subject against active agents,
+so a deactivated or deleted agent cannot continue using an otherwise valid token.
+This costs a small lookup per request, which is appropriate for this six-agent app.
+
+The escalation HTTP DTO now contains only the reason. The controller obtains the
+validated subject and passes the ID as a separate handler argument; the application
+therefore has no HttpContext or claims dependency. A current-user service abstraction
+would add another seam where an ordinary trusted argument is sufficient. The handler
+records agent:<id>, a stable identifier that fits the existing history column even
+when names or emails are long. Old history remains intact without a new migration.
+
+I removed the editable actor field from the form and its payload type in the same
+commit so the client contract matches the server. Obsolete caller-actor validation
+tests were replaced with authenticated HTTP behavior tests. The tests include forged
+JSON actor fields for two distinct logins, persisted history, all current endpoint
+methods, and a new unannotated test endpoint proving the fallback policy applies.
+The browser login/session flow remains the next step; protected API access can be
+checked with the documented PowerShell commands until that work is complete.
+
+Verification passed 210 backend tests (184 unit/integration, four architecture and
+22 HTTP), 43 frontend tests, web lint, TypeScript checking and the production build.
+Obsolete actor-input validation cases account for the lower unit/frontend counts;
+the new HTTP cases verify actor provenance and central protection directly.

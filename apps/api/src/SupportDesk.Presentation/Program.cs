@@ -1,5 +1,8 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using System.Globalization;
+using SupportDesk.Application.Abstractions;
 using SupportDesk.Infrastructure.Authentication;
 using SupportDesk.Application;
 using SupportDesk.Domain.Aggregates.Tickets;
@@ -43,8 +46,25 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
     {
         options.MapInboundClaims = false;
         options.TokenValidationParameters = settings.CreateValidationParameters();
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                if (!int.TryParse(context.Principal?.FindFirst("sub")?.Value,
+                    NumberStyles.None, CultureInfo.InvariantCulture, out var agentId) || agentId <= 0)
+                {
+                    context.Fail("Invalid agent identity.");
+                    return;
+                }
+
+                var authentication = context.HttpContext.RequestServices.GetRequiredService<IAgentAuthenticationService>();
+                if (await authentication.GetActiveAgentAsync(agentId, context.HttpContext.RequestAborted) is null)
+                    context.Fail("Invalid agent identity.");
+            }
+        };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+    options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
 
 // Bind and validate the shared business configuration at startup. The policy itself
 // has no dependency on ASP.NET, configuration binding, or the database.

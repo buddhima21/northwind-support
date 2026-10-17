@@ -13,7 +13,6 @@ interface EscalationPanelProps {
 /** The server owns escalation decisions; this form validates only the request inputs. */
 export function EscalationPanel({ ticket, onUpdated, onReload }: EscalationPanelProps) {
   const [reason, setReason] = useState('');
-  const [actor, setActor] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
   const [conflict, setConflict] = useState(false);
@@ -31,13 +30,10 @@ export function EscalationPanel({ ticket, onUpdated, onReload }: EscalationPanel
     if (blocked || submitting.current) {
       return;
     }
-    const payload = { reason: reason.trim(), escalatedBy: actor.trim() };
+    const payload = { reason: reason.trim() };
     const validation: Record<string, string> = {};
     if (payload.reason.length < 5 || payload.reason.length > 500) {
       validation.reason = 'Enter a reason of 5 to 500 characters.';
-    }
-    if (payload.escalatedBy.length < 1 || payload.escalatedBy.length > 100) {
-      validation.escalatedBy = 'Enter your name or identifier (1 to 100 characters).';
     }
     setErrors(validation);
     setError(undefined);
@@ -92,21 +88,6 @@ export function EscalationPanel({ ticket, onUpdated, onReload }: EscalationPanel
                 rows={3}
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-              />
-            )}
-          </Field>
-          <Field
-            id="escalation-actor"
-            label="Escalated by"
-            error={errors.escalatedBy}
-            hint="Your name or identifier for the history record."
-          >
-            {(props) => (
-              <input
-                {...props}
-                type="text"
-                value={actor}
-                onChange={(event) => setActor(event.target.value)}
               />
             )}
           </Field>

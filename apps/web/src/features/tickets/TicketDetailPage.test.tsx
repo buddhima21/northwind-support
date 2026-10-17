@@ -44,7 +44,6 @@ async function openAndSubmit() {
   await screen.findByRole('heading', { name: initial.title });
   await screen.findByText('No escalations yet');
   fireEvent.change(screen.getByLabelText('Reason'), { target: { value: escalation.reason } });
-  fireEvent.change(screen.getByLabelText('Escalated by'), { target: { value: escalation.escalatedBy } });
   await userEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
 }
 

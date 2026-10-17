@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Globalization;
 using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
 using SupportDesk.Application.Features.Tickets.Queries.GetEscalations;
 using SupportDesk.Application.Contracts.Common;
@@ -62,7 +63,8 @@ public sealed class TicketsController : ControllerBase
     [HttpPost("{id:int}/escalate")]
     public Task<TicketDetailDto> Escalate(int id, EscalateTicketRequest request,
         [FromServices] EscalateTicketCommandHandler handler, CancellationToken ct) =>
-        handler.HandleAsync(id, request, ct);
+        handler.HandleAsync(id, request,
+            int.Parse(User.FindFirst("sub")!.Value, CultureInfo.InvariantCulture), ct);
 
     [HttpGet("{id:int}/escalations")]
     public Task<IReadOnlyList<TicketEscalationDto>> Escalations(int id,

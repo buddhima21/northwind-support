@@ -15,7 +15,7 @@ namespace SupportDesk.UnitTests.Infrastructure.Creation;
 
 public sealed class TicketEscalationIntegrationTests
 {
-    private static EscalateTicketRequest Reason() => new("Customer needs urgent attention", "test.lead");
+    private static EscalateTicketRequest Reason() => new("Customer needs urgent attention");
     private static CreateTicketRequest Create(TicketPriority priority = TicketPriority.High) =>
         new("An escalation test ticket", "Customer requires assistance with their account.", 2, 1, priority);
 
@@ -26,7 +26,7 @@ public sealed class TicketEscalationIntegrationTests
         var created = await desk.CreateHandler().HandleAsync(Create(), default);
         desk.Clock.Advance(TimeSpan.FromHours(5));
 
-        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         Assert.Equal(TicketPriority.Critical, result.Priority);
         Assert.Equal(desk.Clock.UtcNow.AddHours(4), result.DueAtUtc);
@@ -37,7 +37,7 @@ public sealed class TicketEscalationIntegrationTests
         Assert.Equal(TicketPriority.Critical, history.ToPriority);
         Assert.Equal(created.DueAtUtc, history.FromDueAtUtc);
         Assert.Equal(result.DueAtUtc, history.ToDueAtUtc);
-        Assert.Equal("test.lead", history.EscalatedBy);
+        Assert.Equal("agent:1", history.EscalatedBy);
         desk.Db.ChangeTracker.Clear();
         var stored = await desk.Db.Set<Ticket>().SingleAsync(t => t.Id == created.Id);
         Assert.Equal(result.Priority, stored.Priority);
@@ -55,7 +55,7 @@ public sealed class TicketEscalationIntegrationTests
         owner.Deactivate();
         await desk.Db.SaveChangesAsync();
 
-        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         Assert.NotEqual(created.AssignedAgent?.Id, result.AssignedAgent?.Id);
         Assert.Equal(2, result.AssignedAgent?.Id);
@@ -71,7 +71,7 @@ public sealed class TicketEscalationIntegrationTests
         foreach (var agent in await desk.Db.Set<Agent>().ToListAsync()) agent.Deactivate();
         await desk.Db.SaveChangesAsync();
 
-        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         Assert.Null(result.AssignedAgent);
         Assert.Null(result.Escalation?.ToAgent);
@@ -85,7 +85,7 @@ public sealed class TicketEscalationIntegrationTests
     public async Task Escalate_ConflictsSaveNeitherTicketNorHistory(int id, string message)
     {
         await using var desk = await SqliteDesk.CreateAsync();
-        var error = await Assert.ThrowsAsync<BusinessRuleViolationException>(() => desk.EscalateHandler().HandleAsync(id, Reason(), default));
+        var error = await Assert.ThrowsAsync<BusinessRuleViolationException>(() => desk.EscalateHandler().HandleAsync(id, Reason(), 1, default));
         Assert.Contains(message, error.Message);
         Assert.Empty(await desk.Db.Set<TicketEscalation>().ToListAsync());
     }
@@ -94,7 +94,7 @@ public sealed class TicketEscalationIntegrationTests
     public async Task MissingTicketsReturnNotFound_ForEscalationAndHistory()
     {
         await using var desk = await SqliteDesk.CreateAsync();
-        await Assert.ThrowsAsync<NotFoundException>(() => desk.EscalateHandler().HandleAsync(999, Reason(), default));
+        await Assert.ThrowsAsync<NotFoundException>(() => desk.EscalateHandler().HandleAsync(999, Reason(), 1, default));
         var history = new GetEscalationsQueryHandler(new TicketRepository(desk.Db), new TicketEscalationQueries(desk.Db));
         await Assert.ThrowsAsync<NotFoundException>(() => history.HandleAsync(999, default));
         Assert.Empty(await history.HandleAsync(1, default));
@@ -105,8 +105,8 @@ public sealed class TicketEscalationIntegrationTests
     {
         await using var desk = await SqliteDesk.CreateAsync();
         var created = await desk.CreateHandler().HandleAsync(Create(TicketPriority.Low), default);
-        var first = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
-        var second = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var first = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
+        var second = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         var history = await new TicketEscalationQueries(desk.Db).GetHistoryAsync(created.Id, default);
 
@@ -123,7 +123,7 @@ public sealed class TicketEscalationIntegrationTests
     {
         await using var desk = await SqliteDesk.CreateAsync();
         var created = await desk.CreateHandler().HandleAsync(Create(), default);
-        await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
         var history = await desk.Db.Set<TicketEscalation>().SingleAsync();
         if (delete) desk.Db.Remove(history);
         else desk.Db.Entry(history).Property(e => e.Reason).CurrentValue = "Tampered reason";
@@ -138,7 +138,7 @@ public sealed class TicketEscalationIntegrationTests
         var created = await desk.CreateHandler().HandleAsync(Create(), default);
         await using var other = new SupportDbContext(desk.Options);
         var stale = await other.Set<Ticket>().SingleAsync(t => t.Id == created.Id);
-        await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
         stale.Escalate(desk.Policy.Calculate(TicketPriority.Critical, CustomerTier.Standard, desk.Clock.UtcNow),
             new AssignmentDecision(null, "No available agent"), "Stale escalation request", "other.lead", desk.Clock.UtcNow);
 
@@ -173,7 +173,7 @@ public sealed class TicketEscalationIntegrationTests
             desk.Db.Add(new TicketBuilder().WithReference($"TCK-{index:0000}").AssignedTo(created.AssignedAgent!.Id).Build());
         await desk.Db.SaveChangesAsync();
 
-        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         Assert.Equal(2, result.AssignedAgent?.Id);
         Assert.NotEqual(created.AssignedAgent?.Id, result.AssignedAgent?.Id);
@@ -189,7 +189,7 @@ public sealed class TicketEscalationIntegrationTests
         desk.Db.Remove(specialization);
         await desk.Db.SaveChangesAsync();
 
-        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         Assert.Null(result.AssignedAgent); // The other Billing specialist, Marcus, is full.
         Assert.Contains("specialised in Billing", result.Triage!.AssignmentReason);
@@ -202,7 +202,7 @@ public sealed class TicketEscalationIntegrationTests
         var created = await desk.CreateHandler().HandleAsync(Create() with { CustomerId = 1 }, default);
         desk.Clock.Advance(TimeSpan.FromHours(1));
 
-        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), default);
+        var result = await desk.EscalateHandler().HandleAsync(created.Id, Reason(), 1, default);
 
         Assert.Equal(desk.Clock.UtcNow.AddHours(2), result.DueAtUtc);
         Assert.Equal(2, result.Triage?.SlaWindowHours);
