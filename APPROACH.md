@@ -261,3 +261,37 @@ request. This document and README remain the repository's handover documentation
 Verification after the credential change passed 186 backend unit/integration tests,
 four architecture tests, 22 HTTP tests and 77 frontend tests (289 total), including
 both existing-Alex upgrade cases and preservation of independently changed passwords.
+
+## Task 4, step 1: API image and build context
+
+I added a two-stage Dockerfile at apps/api/Dockerfile with the repository root as
+build context. The SDK stage copies global.json, central package/build properties
+and all four API project files before restoring the Presentation project. Source is
+copied afterwards, so an ordinary C# edit does not invalidate dependency restore.
+Publishing uses Release and no apphost; only published files enter the ASP.NET runtime
+stage. The final stage selects the base image's APP_UID user and HTTP port 8080.
+
+The root .dockerignore uses an allowlist for API sources and shared build metadata,
+followed by exclusions for bin/obj, secrets, environment configuration and certificates.
+This avoids sending the React app, Git history or local .env/development fixtures to
+the builder. Shared appsettings.json is retained for business/SLA defaults; connection
+strings, JWT configuration and environment name will be injected when containers run.
+No API/SQL Compose wiring or health endpoint is included in this first commit.
+
+Before starting Docker work, I checked Task 3 against the currently running platform.
+The database still held Alex's old email because that process had started before the
+credential update. I ran the already-merged development seeder through a temporary
+process and stopped it afterwards. Alex's new login then worked on the original API;
+the existing 41 tickets and two history rows were preserved. Read-only API and private
+browser checks passed login, protected routes, current user, refresh, wrong-password/
+inactive-agent rejection, 401 recovery and logout without changing tickets.
+
+The Docker build and Dockerfile checks passed. Runtime inspection confirmed the
+app user (UID 1654), HTTP port 8080, no SDK, no connection/JWT/environment variables
+baked into the image, and only shared appsettings.json. A separate temporary context
+changed one C# comment: restore remained CACHED and source copy/publish reran. The
+API image measured 454,867,171 bytes (433.8 MiB), versus 1,303,849,665 bytes
+(1243.4 MiB) for the matching SDK baseline, about a 65% reduction. Build context
+transfer was 221.69 kB. Restore and publish succeeded with existing NU1902/NU1903
+warnings for transitive System.Security.Cryptography.Pkcs 9.0.11; dependency
+remediation remains outstanding. Container startup against SQL awaits Compose.

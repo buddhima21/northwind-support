@@ -1,7 +1,8 @@
 # Northwind Support Desk
 
-.NET 10 Web API, React 19/TypeScript and SQL Server. Tasks 1-3 are implemented;
-Task 4 (API containerization) and the optional SLA report are not implemented.
+.NET 10 Web API, React 19/TypeScript and SQL Server. Tasks 1-3 are implemented.
+Task 4 is in progress: the API Dockerfile/build context are added; Compose integration
+and database health reporting are next. The optional SLA report is deferred.
 Requirements: [assessment PDF](ASSIGNMENT_CANDIDATE.pdf). Design reasoning, verification
 and the step-by-step record are in [APPROACH.md](APPROACH.md).
 
@@ -44,6 +45,38 @@ Compose reads
 Set process environment variables such as `$env:ConnectionStrings__Default` to
 override API settings. Never commit `.env` or real credentials. Visual Studio:
 open `SupportDesk.sln`, select SupportDesk.Presentation and use the https profile.
+
+## API image: Task 4, step 1
+
+Build from the repository root, because the API references projects and shared build
+metadata outside its own directory:
+
+```powershell
+docker build -f apps/api/Dockerfile -t northwind-support-api:dev .
+docker run --rm --entrypoint whoami northwind-support-api:dev
+docker image ls northwind-support-api
+```
+
+The SDK stage restores using only the project files, central package/build properties
+and global.json, then copies source and publishes Release output. A source-only change
+therefore preserves the restore cache. The final ASP.NET 10 image contains published
+output, runs as the image's non-root `app` user, and exposes HTTP port 8080.
+
+The root .dockerignore admits only API sources and required .NET metadata. It excludes
+host build outputs, the React app, .git, .env files, environment-specific appsettings,
+launch settings and certificates. Shared appsettings.json stays for the SLA defaults;
+database, JWT and environment settings must be supplied at runtime. The next steps
+add `/health` and Compose wiring for the database/configuration.
+
+Step 1 verification: the image built successfully; `whoami` returned `app` (UID
+1654), no SDK was installed, and only shared appsettings.json was published. An
+isolated rebuild with one C# comment changed reused the restore layer and reran
+publish. Docker-reported image sizes were 433.8 MiB for the API and 1243.4 MiB for
+the SDK baseline (about 65% smaller). These are local image sizes, not download sizes.
+Restore/publish reported NU1902/NU1903 warnings for the existing transitive
+System.Security.Cryptography.Pkcs 9.0.11 dependency; this Docker step does not resolve
+those dependency warnings. Full container startup with SQL is verified in the
+later Compose step.
 
 ## What changed
 
@@ -181,15 +214,15 @@ now occurs against the built host. Redirect validation was tightened for encoded
 trailing-slash login paths. I verified generated code with tests, types, lint, builds,
 SQL checks and browser checks, and must be able to explain the submitted code.
 
-Task 4 remains unfinished: Compose runs SQL Server only, with no API image or image-size
-measurement. A real deployment should run migrations as a controlled deployment job,
+Task 4 remains unfinished: an API image is added, while Compose still runs SQL Server
+only and `/health` is pending. A real deployment should run migrations as a controlled deployment job,
 not rely on Development startup/seeding. The optional report is deferred. Cross-ticket
 assignment uses a workload snapshot and can exceed capacity under simultaneous creates;
 the reference generator retains its concurrency limitation. Triage reasons are returned
 but not persisted for later GETs. Registration, password reset, roles, OAuth/SSO,
 refresh tokens, MFA and rate limiting were deliberately not added.
 
-Keep the focused commits and merge the Task 3 PR into your fork's main with a merge
+Keep the focused commits and merge feature PRs into your fork's main with a merge
 commit. Before submitting, include the fork/PR link, development login and your actual
 rough time spent; assignment estimates are not a record of time spent. Read
 [APPROACH.md](APPROACH.md) for implementation details and trade-offs.

@@ -1,0 +1,28 @@
+# Only the API sources and shared .NET build metadata enter this build context.
+**
+!global.json
+!Directory.Build.props
+!Directory.Packages.props
+!apps/
+!apps/api/
+!apps/api/src/
+!apps/api/src/**
+
+# Never copy host build output, dependencies, source-control data or credentials.
+**/bin/
+**/obj/
+**/node_modules/
+**/.git/
+**/.env
+**/.env.*
+**/secrets.json
+**/*.pfx
+**/*.p12
+**/*.pem
+**/*.key
+apps/web/
+
+# Keep shared appsettings.json (SLA defaults), but supply environment-specific
+# connection/JWT/environment settings at runtime, never from a published fixture file.
+**/appsettings.*.json
+**/Properties/launchSettings.json
