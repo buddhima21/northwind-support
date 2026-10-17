@@ -22,14 +22,50 @@ public sealed class DevelopmentCredentialsTests
         Assert.Equal(6, agents.Select(agent => agent.PasswordHash).Distinct().Count());
         foreach (var agent in agents)
         {
+            var password = agent.Email == SupportDbSeeder.AlexDevelopmentEmail
+                ? SupportDbSeeder.AlexDevelopmentPassword : SupportDbSeeder.DevelopmentPassword;
             Assert.NotNull(agent.PasswordHash);
-            Assert.NotEqual(SupportDbSeeder.DevelopmentPassword, agent.PasswordHash);
+            Assert.NotEqual(password, agent.PasswordHash);
             Assert.NotEqual(PasswordVerificationResult.Failed,
-                _hasher.VerifyHashedPassword(agent, agent.PasswordHash, SupportDbSeeder.DevelopmentPassword));
+                _hasher.VerifyHashedPassword(agent, agent.PasswordHash, password));
             Assert.Equal(PasswordVerificationResult.Failed,
                 _hasher.VerifyHashedPassword(agent, agent.PasswordHash, "WrongPassword!"));
         }
         Assert.False(Assert.Single(agents, agent => agent.Email.StartsWith("yuki.", StringComparison.Ordinal)).IsActive);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LegacyAlexFixture_IsUpgradedInPlaceWithoutResettingItOnLaterStarts(bool oldEmail)
+    {
+        await using var desk = await SqliteDesk.CreateAsync();
+        var alex = await desk.Db.Set<Agent>().SingleAsync(a => a.Email == SupportDbSeeder.AlexDevelopmentEmail);
+        var id = alex.Id;
+        var otherHashes = await desk.Db.Set<Agent>().Where(a => a.Id != id).OrderBy(a => a.Id)
+            .Select(a => a.PasswordHash).ToArrayAsync();
+        if (oldEmail)
+            desk.Db.Entry(alex).Property(a => a.Email).CurrentValue = "alex.turner@northwind-support.example";
+        alex.SetPasswordHash(_hasher.HashPassword(alex, SupportDbSeeder.DevelopmentPassword));
+        await desk.Db.SaveChangesAsync();
+
+        await Seeder(desk).SeedAsync();
+        desk.Db.ChangeTracker.Clear();
+        var saved = await desk.Db.Set<Agent>().SingleAsync(a => a.Id == id);
+        Assert.Equal(SupportDbSeeder.AlexDevelopmentEmail, saved.Email);
+        Assert.NotEqual(PasswordVerificationResult.Failed, _hasher.VerifyHashedPassword(
+            saved, saved.PasswordHash!, SupportDbSeeder.AlexDevelopmentPassword));
+        Assert.Equal(PasswordVerificationResult.Failed, _hasher.VerifyHashedPassword(
+            saved, saved.PasswordHash!, SupportDbSeeder.DevelopmentPassword));
+        Assert.Equal(6, await desk.Db.Set<Agent>().CountAsync());
+        Assert.Equal(40, await desk.Db.Set<Ticket>().CountAsync());
+        Assert.Equal(otherHashes, await desk.Db.Set<Agent>().Where(a => a.Id != id).OrderBy(a => a.Id)
+            .Select(a => a.PasswordHash).ToArrayAsync());
+
+        var upgradedHash = saved.PasswordHash;
+        await Seeder(desk).SeedAsync();
+        desk.Db.ChangeTracker.Clear();
+        Assert.Equal(upgradedHash, (await desk.Db.Set<Agent>().SingleAsync(a => a.Id == id)).PasswordHash);
     }
 
     [Fact]

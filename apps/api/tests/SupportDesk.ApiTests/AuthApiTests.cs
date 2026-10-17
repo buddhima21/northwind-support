@@ -26,7 +26,7 @@ namespace SupportDesk.ApiTests;
 
 public sealed class AuthApiTests : IAsyncLifetime
 {
-    private const string Email = "alex.turner@northwind-support.example";
+    private const string Email = "alex.turner@northwind.com";
     private readonly AuthApiFactory _factory = new();
     private HttpClient _client = null!;
 
@@ -42,7 +42,7 @@ public sealed class AuthApiTests : IAsyncLifetime
     [Fact]
     public async Task Login_ReturnsSignedTokenWithExpectedIdentityAndOneHourExpiry()
     {
-        var result = await LoginAsync("  ALEX.TURNER@NORTHWIND-SUPPORT.EXAMPLE  ");
+        var result = await LoginAsync("  ALEX.TURNER@NORTHWIND.COM  ");
         Assert.Equal(Email, result.User.Email);
         Assert.Equal("Alex Turner", result.User.FullName);
         var token = new JwtSecurityTokenHandler().ReadJwtToken(result.AccessToken);
@@ -85,7 +85,7 @@ public sealed class AuthApiTests : IAsyncLifetime
         db.Entry(agent).Property(a => a.PasswordHash).CurrentValue = null;
         await db.SaveChangesAsync();
 
-        var response = await _client.PostAsJsonAsync("/api/auth/login", new LoginRequest(Email, SupportDbSeeder.DevelopmentPassword));
+        var response = await _client.PostAsJsonAsync("/api/auth/login", new LoginRequest(Email, SupportDbSeeder.AlexDevelopmentPassword));
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal("Invalid email or password.",
             (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString());
@@ -283,7 +283,8 @@ public sealed class AuthApiTests : IAsyncLifetime
 
     private async Task<LoginResponse> LoginAsync(string email = Email)
     {
-        var response = await _client.PostAsJsonAsync("/api/auth/login", new LoginRequest(email, SupportDbSeeder.DevelopmentPassword));
+        var response = await _client.PostAsJsonAsync("/api/auth/login", new LoginRequest(email, email.Trim().Equals(Email, StringComparison.OrdinalIgnoreCase)
+            ? SupportDbSeeder.AlexDevelopmentPassword : SupportDbSeeder.DevelopmentPassword));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<LoginResponse>())!;
     }

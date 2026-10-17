@@ -11,7 +11,7 @@ namespace SupportDesk.Infrastructure.Data;
 
 /// <summary>
 /// Development seed data: the small support desk the team uses to demo the application.
-/// Mirrors <c>database/02_seed.sql</c>, including the relative timestamps, so both routes
+/// Mirrors <c>db/seed.sql</c>, including the relative timestamps, so both routes
 /// produce the same database.
 /// </summary>
 /// <remarks>
@@ -27,6 +27,9 @@ public sealed class SupportDbSeeder(
 {
     // Public local fixture only. Never use this password outside the development demo.
     public const string DevelopmentPassword = "Northwind_LocalDemo_Only1!";
+    public const string AlexDevelopmentEmail = "alex.turner@northwind.com";
+    public const string AlexDevelopmentPassword = "northwind_alexturner";
+    private const string LegacyAlexEmail = "alex.turner@northwind-support.example";
 
     /// <summary>Seeds demo data and provisions missing credentials on existing demo agents.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
@@ -45,7 +48,7 @@ public sealed class SupportDbSeeder(
         var agents = SeedAgents(now);
         foreach (var agent in agents)
         {
-            agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, PasswordFor(agent)));
         }
 
         db.AddRange(categories);
@@ -66,18 +69,41 @@ public sealed class SupportDbSeeder(
 
     private async Task SeedMissingDevelopmentCredentialsAsync(CancellationToken ct)
     {
-        var demoEmails = SeedAgents(clock.UtcNow).Select(agent => agent.Email).ToArray();
+        var demoEmails = SeedAgents(clock.UtcNow).Select(agent => agent.Email).Append(LegacyAlexEmail).ToArray();
         var agents = await db.Set<Agent>()
-            .Where(agent => demoEmails.Contains(agent.Email) && agent.PasswordHash == null)
+            .Where(agent => demoEmails.Contains(agent.Email))
             .ToListAsync(ct);
+
+        if (agents.Any(agent => agent.Email == LegacyAlexEmail)
+            && agents.Any(agent => agent.Email == AlexDevelopmentEmail))
+            throw new InvalidOperationException("Both old and new Alex demo accounts exist. Resolve the duplicate before seeding.");
 
         foreach (var agent in agents)
         {
-            agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+            if (agent.Email == LegacyAlexEmail)
+            {
+                // Upgrade the development fixture in place, preserving IDs and relationships.
+                db.Entry(agent).Property(a => a.Email).CurrentValue = AlexDevelopmentEmail;
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, AlexDevelopmentPassword));
+            }
+            else if (agent.PasswordHash is null)
+            {
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, PasswordFor(agent)));
+            }
+            else if (agent.Email == AlexDevelopmentEmail
+                && passwordHasher.VerifyHashedPassword(agent, agent.PasswordHash, DevelopmentPassword)
+                    != PasswordVerificationResult.Failed)
+            {
+                // Also upgrade a demo account whose email was already changed independently.
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, AlexDevelopmentPassword));
+            }
         }
 
         await db.SaveChangesAsync(ct);
     }
+
+    private static string PasswordFor(Agent agent) =>
+        agent.Email == AlexDevelopmentEmail ? AlexDevelopmentPassword : DevelopmentPassword;
 
     private static List<Category> SeedCategories() =>
     [
@@ -105,7 +131,7 @@ public sealed class SupportDbSeeder(
 
         return
         [
-            new("Alex Turner", "alex.turner@northwind-support.example", 10, now.AddDays(-500)),
+            new("Alex Turner", AlexDevelopmentEmail, 10, now.AddDays(-500)),
             new("Ben Osei", "ben.osei@northwind-support.example", 8, now.AddDays(-460)),
             new("Priya Nair", "priya.nair@northwind-support.example", 8, now.AddDays(-400)),
             new("Sara Lindqvist", "sara.lindqvist@northwind-support.example", 6, now.AddDays(-280)),

@@ -44,7 +44,7 @@ function open(path: string, state?: unknown) {
   return router;
 }
 
-function credentials(email = 'alex.turner@northwind-support.example', password = 'Local password!') {
+function credentials(email = 'alex.turner@northwind.com', password = 'Local password!') {
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } });
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } });
 }
@@ -54,7 +54,7 @@ describe('authentication routing and login', () => {
     const navigation = open('/tickets/12?view=history#escalations');
     await screen.findByRole('heading', { name: 'Sign in' });
     expect(fetchMock).not.toHaveBeenCalled();
-    credentials('  alex.turner@northwind-support.example  ', ' Keep spaces! ');
+    credentials('  alex.turner@northwind.com  ', ' Keep spaces! ');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await screen.findByRole('heading', { name: ticketDetail().title });
@@ -63,7 +63,7 @@ describe('authentication routing and login', () => {
     expect(navigation.state.location.hash).toBe('#escalations');
     expect(screen.getByText('Signed in as Alex Turner')).toBeInTheDocument();
     const login = fetchMock.mock.calls.find(([url]) => url === '/api/auth/login')!;
-    expect(JSON.parse(String(login[1]?.body))).toEqual({ email: 'alex.turner@northwind-support.example', password: ' Keep spaces! ' });
+    expect(JSON.parse(String(login[1]?.body))).toEqual({ email: 'alex.turner@northwind.com', password: ' Keep spaces! ' });
     expect(new Headers(login[1]?.headers).has('Authorization')).toBe(false);
     for (const [, init] of fetchMock.mock.calls.filter(([url]) => url !== '/api/auth/login'))
       expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer test-access-token');

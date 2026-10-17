@@ -1,463 +1,195 @@
 # Northwind Support Desk
 
-A support ticket management system: raise tickets, search and filter them, assign them to agents,
-and move them through their lifecycle.
-
-**.NET 10 Web API** + **React 19 / TypeScript** + **SQL Server**, in one monorepo.
-
----
-
-## The assignment
-
-You are joining a team that already has this app working. Complete the tasks **in order**.
-Full requirements are in **[`ASSIGNMENT_CANDIDATE.md`](ASSIGNMENT_CANDIDATE.md)**.
-
-| # | Task | Done looks like | Effort |
-| --- | --- | --- | --- |
-| 1 | **Fix a defect, add server-side filtering** | Root cause fixed with a regression test; every list filter applied in the database with a correct count | ~2.5 h |
-| 2 | **Ticket escalation & assignment** | Automatic triage on create, escalation with history, SLA status, UI for all of it | ~7 h |
-| 3 | **Login and authentication** | Agents sign in; API rejects unauthenticated calls; login UI | ~4 h |
-| 4 | **Dockerise the API** *(optional)* | `docker compose up` gives a migrated, seeded API with no baked-in secret | ~1.5 h |
-
-### Guidance
-
-- **Time: 2 days.** Honestly marking a task "not finished" beats rushing all of them.
-- **Fork** this repo to your own GitHub account and work there. **Do not push to the original.**
-- **AI tools are allowed.** You must understand and be able to defend every line you submit.
-- **Commit as you go** and keep the real history. Commit the Task 1 defect fix and the filtering
-  separately from each other and from the feature work. A single squashed commit is not accepted.
-- **Where the spec is ambiguous**, make a decision, write it down in the README, and move on.
-- **Out of scope:** registration, password reset, roles, OAuth/SSO, refresh tokens, MFA,
-  notifications, CI, caching, visual redesign. Mention them under *Known limitations* instead.
-
-### Submission
-
-1. Update this **README** with what you built, your design decisions (chosen, rejected and why),
-   the defect's root cause, dev login credentials, how to run and test it, AI usage, and known
-   limitations. A reviewer must be able to run it without asking you anything.
-2. Add an **APPROACH.md** explaining your approach and thought process for each task.
-3. Commit both, then send us the **link to your fork**, the **dev login credentials**, and a
-   **rough note of time spent** on what. (If the fork is private, add the reviewers as collaborators.)
-
----
-
-## Quick start
-
-**Prerequisites:** .NET SDK 10 (`global.json`), Node.js 22 (`.nvmrc`; 20.19+ works), Docker.
-
-```bash
-cp .env.example .env          # optional, every value has a working default
-npm install                   # installs the web app
-npm run db:up                 # SQL Server 2022 in Docker on localhost:1433
-npm run api                   # terminal 1: migrates, seeds, then serves the API
-npm run web                   # terminal 2: React dev server
-```
-
-| What | Where |
-| --- | --- |
-| Web app | http://localhost:5173 |
-| API | https://localhost:7043 (also http://localhost:5043) |
-| Swagger | https://localhost:7043/swagger |
-
-In Development the API applies migrations and seeds demo data on startup. **Never commit real
-credentials.**
-
-**Visual Studio 2026:** run `npm run db:up`, open `SupportDesk.sln`, set
-**SupportDesk.Presentation** as the startup project, and press F5 on the **https** profile.
-
-## Tests
-
-```bash
-npm test                      # dotnet test, then the web tests (Vitest)
-```
-
-Both pass on a clean checkout and neither needs a database.
-
-## Commands
-
-| Command | What it does |
-| --- | --- |
-| `npm run db:up` / `db:down` / `db:reset` | Start / stop / wipe SQL Server |
-| `npm run api` / `npm run web` | Run the API / the React app |
-| `npm run build` | Build both |
-| `npm run lint` / `typecheck` / `format` | Web lint and types / `dotnet format` |
-| `npm run ef -- migrations add <Name>` | Add an EF Core migration |
-
-## API at a glance
-
-| Endpoint | Description |
-| --- | --- |
-| `GET /api/tickets` | Paged list with `search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`, `unassignedOnly`, `slaStatus`, `sortBy`, `sortDirection`. Filters are applied in SQL before counting and paging; see the implementation notes below. |
-| `GET /api/tickets/{id}` | One ticket |
-| `POST /api/tickets` | Create a ticket |
-| `PATCH /api/tickets/{id}/status` · `/assignment` | Change status / assignee |
-| `GET /api/customers` · `/api/agents` · `/api/categories` | Reference data |
-
-Errors are `ProblemDetails`: `400` validation, `404` not found, `409` conflict or business rule.
-
-**Seed data:** 5 categories, 6 customers (3 Premium), 6 agents (one inactive, one at their limit)
-and 40 tickets across every status, priority and SLA state.
-
-## Troubleshooting
-
-| Symptom | Fix |
-| --- | --- |
-| API cannot reach the database | `npm run db:up`, wait ~20 s, check `docker compose ps` |
-| Port 1433 already in use | Change the port in `docker-compose.yml` and `.env` |
-| Browser warns about the certificate | `dotnet dev-certs https --trust`, or use the web app, which proxies |
-| Web app shows "Unable to load tickets" | The API is not running, or `VITE_API_PROXY_TARGET` points at the wrong port |
-| SQL Server slow on Apple Silicon | Enable Rosetta in Docker Desktop → Settings → General |
-
----
-
-## Candidate implementation
-
-This section records the work completed for this assessment against the supplied
-[assignment PDF](ASSIGNMENT_CANDIDATE.pdf). [APPROACH.md](APPROACH.md) explains the
-reasoning in more detail.
-
-### Completed work
-
-| Task | Current status |
-| --- | --- |
-| Task 1: defect fix and server-side filtering | Implemented, tested and merged |
-| Task 2: ticket escalation and assignment | Backend and frontend implemented and verified |
-| Task 3: login and authentication | Implemented: agent login/JWT, central API protection, authenticated actor, login/session UI and logout |
-| Task 4: API containerization | Not implemented yet; Compose starts SQL Server only |
-| Optional SLA summary report | Deferred until Tasks 1-3 are complete |
-
-### Task 1: defects and server-side filtering
-
-**DEFECT-117:** the ticket-list fetching effect observed search, page and page size
-but omitted the other filters. Changing Status on page 1 therefore changed the
-control without requesting new results. The hook now observes the complete filter
-object. Dropdowns request immediately; search alone is debounced by 300 ms. A request
-sequence prevents older responses replacing newer results. The status-only regression
-test failed against the original hook and passed after the fix.
-
-**DEFECT-104 / priority filtering:** the starter API accepted filters without applying
-them. `TicketQueries.ApplyFilters` now combines exact-match priority, status, category,
-customer, agent, unassigned-only, search and SLA predicates with AND. High returns
-only High. Search matches title, reference or customer name using database collation.
-Filters precede both COUNT and sorted paging. Relational tests inspect generated SQL;
-SQL Server checks also verified results and paging. New filters belong in this same
-method so the count and returned page stay consistent.
-
-To verify the defect fix, clear the browser Network log and change Status alone.
-A new `/api/tickets` request should contain the selected status. Check High priority,
-combined filters, customer-name search and pagination; inspect the API SQL log for
-WHERE in both COUNT and the paged SELECT.
-
-### Task 2: business rules and frontend
-
-Creating a ticket now determines priority, deadline and owner automatically and returns
-human-readable triage reasons. Requested priority defaults to Medium; category flags
-can force Critical. Default SLA windows are Critical 4h, High 8h, Medium 24h and Low
-72h. Premium customers receive half the window, with a 1h minimum. Assignment selects
-active agents strictly below capacity, requiring specialization where the category
-specifies it. Fewest open tickets wins, then lowest ID. If nobody qualifies, creation
-still succeeds with an unassigned ticket and an explanation.
-
-Escalation raises priority one level, recalculates the deadline from the injected
-clock, keeps an eligible owner or reassigns, and saves immutable history. Critical,
-Resolved and Closed tickets return 409; missing tickets return 404. Trimmed reasons
-must contain 5-500 characters; the actor is now the authenticated agent's stable ID.
-History is returned newest
-first with before/after priority, owner and deadline, reason, actor and time.
-
-SLA status is derived rather than stored: no deadline means No SLA; on-time resolution
-means Met; late resolution or an unresolved ticket past due means Breached. An
-unresolved ticket with 25% or less of its window remaining is At risk; otherwise it
-is Within SLA. Exactly at the deadline is At risk, and one tick after is Breached.
-The new `slaStatus` parameter filters in SQL before counting, sorting and paging.
-
-The UI uses one labelled SLA indicator on list and detail pages, an SLA filter,
-a validated escalation form, history and a create-time triage summary. It disables
-ineligible escalation and pending duplicate submissions, displays server errors and
-refreshes the saved ticket and history without a page reload. A 409 retains the draft
-and displayed ticket with an explicit reload action. History reads have their own
-loading, empty, error and retry states; stale reads cannot overwrite a refresh.
-
-### Design decisions and alternatives
-
-PriorityPolicy, SlaPolicy and AssignmentPolicy are plain domain policies shared by
-creation and escalation. Application handlers coordinate database queries and a single
-save; controllers handle HTTP. Database interfaces provide useful seams, while an
-interface for every pure policy, event sourcing and a new frontend state library
-would add complexity without helping these requirements.
-
-SLA values live in shared `appsettings.json`, with environment overrides and startup
-validation, so all environments receive the same defaults. Category flags replace
-name-based checks. Windows snapshot their deadline and at-risk cutoff; configuration
-changes affect future windows after restart. One expression supplies both runtime
-SLA evaluation and SQL predicates. The current ticket counts toward its owner's
-capacity when checking eligibility, following the strict-below requirement.
-
-### Database and API changes
-
-Migration `20261016094553_TicketEscalationAndSlaWindows` adds TicketEscalations and
-ticket fields `SlaStartedAtUtc`, `AtRiskAtUtc` and concurrency token `Revision`.
-It preserves legacy deadlines and backfills cutoffs using the original 25% threshold.
-History has configured keys, required values, length limits and restricted foreign
-keys. `IX_TicketEscalations_Ticket_Time_Id` supports lookup by ticket and stable
-newest-first ordering. EF guards and a SQL Server UPDATE/DELETE trigger protect
-history. Ticket updates and history insertions share one transaction; stale revisions
-return 409. Development startup applies migrations, or run `npm run db:migrate`.
-
-| Endpoint | Added behavior |
-| --- | --- |
-| `POST /api/tickets` | 201 with saved ticket and triage explanations |
-| `POST /api/tickets/{id}/escalate` | 200 with saved ticket, triage and recorded escalation |
-| `GET /api/tickets/{id}/escalations` | Newest-first history; 404 for an unknown ticket |
-| `GET /api/tickets?slaStatus=Breached` | SQL filtering with matching count and pagination |
-
-Example escalation body:
-
-```json
-{"reason":"Customer cannot continue working."}
-```
-
-### Setup, authentication and Docker status
-
-Use the original Quick start above and wait for SQL Server to become healthy before
-starting the API. Default SQL credentials are `sa` / `Local_Dev_Password1`, a local
-fixture, not an application login. Compose reads `.env`; `dotnet run` does not load
-it automatically. Set `$env:ConnectionStrings__Default` in the API terminal to
-override its database connection. Never commit `.env` or real credentials.
-
-Task 3 is implemented: password storage, development seeding, login/JWT issuance,
-authenticated `/api/auth/me`, central endpoint protection, the authenticated escalation
-actor, login UI and browser session handling. `escalatedBy`
-is derived from the validated token and cannot be selected in the request body.
-Task 4 is also pending: there is no API image, image-size measurement or container
-migration workflow to report. The existing Compose service runs SQL Server, and the
-API runs through the .NET SDK.
-
-#### Task 3, step 1: agent credentials
-
-Credentials live in a nullable `Agent.PasswordHash` column (maximum 512 characters),
-added by the `AgentPasswordCredentials` migration. Reusing Agent avoids a second user
-table and identity mapping because this assignment only authenticates existing agents.
-Null supports existing rows and means no credentials have been provisioned; the login
-step must reject such accounts. Agent DTOs do not expose the hash.
-
-Infrastructure uses ASP.NET Core Identity's `PasswordHasher<Agent>` from the shared
-ASP.NET framework for salted PBKDF2 hashing and verification. Domain code only holds
-the encoded hash and does not depend on ASP.NET. This does not add Identity user tables,
-registration or password-reset functionality.
-
-Development startup applies the migration and seeds all six demo agents with the public
-local fixture password `Northwind_LocalDemo_Only1!`. Example email:
-`alex.turner@northwind-support.example`. These credentials are usable at the login
-endpoint. Yuki remains inactive and cannot log in.
-Only hashes are saved. Existing demo databases receive missing hashes without resetting
-existing credentials, creating credentials for other agents, or changing tickets. The
-seeder is called only during Development startup; never use this fixture in production.
-
-Tests check correct/incorrect password verification, distinct salts, all six persisted
-hashes, existing-database provisioning, preservation of existing passwords, repeat runs,
-and unchanged ticket counts. SQLite tests check persistence; SQL Server migration
-application must also be checked when running the app against the local database.
-
-Step 1 verification on 2026-10-17 passed 188 backend unit/integration tests and four
-architecture tests, the Release API build, the EF migration-model check and whitespace
-checks. Existing NU1902/NU1903 dependency warnings remain. In this Windows environment,
-the reliable backend test command was
-`dotnet test --configuration Release -m:1 -p:UseSharedCompilation=false`.
-
-#### Task 3, step 2: login, JWT and current user
-
-`POST /api/auth/login` accepts `{ "email": "...", "password": "..." }`. Email is
-trimmed and matched case-insensitively; passwords are verified exactly as supplied.
-Invalid field shapes return 400. Unknown email, incorrect password, inactive agent and
-missing credentials all return 401 with `Invalid email or password.` and no token.
-Unknown users still undergo password verification against a dummy hash. Successful
-verification upgrades older password hashes when Identity requests rehashing.
-
-Success returns `accessToken`, `expiresAtUtc`, and `user` (`id`, `fullName`, `email`).
-The JWT is signed with HS256 and includes the agent ID as `sub`, name, email, and a
-unique `jti`. Lifetime is 60 minutes; expired tokens have no grace period. There are
-no refresh tokens. The returned expiry matches the token's second-precision expiry.
-
-`GET /api/auth/me` requires `Authorization: Bearer <accessToken>`. Middleware checks
-signature, algorithm, issuer, audience and lifetime. The endpoint then fetches the
-active agent by `sub`, so deactivating an agent also blocks `/me`. Password hashes
-are never returned. Step 3 now protects every other API endpoint centrally and records
-the authenticated identity on escalation (see below).
-
-`Jwt` configuration contains `Issuer`, `Audience`, `SigningKey` and `LifetimeMinutes`.
-Startup rejects missing issuer/audience, a key shorter than 32 UTF-8 bytes, or a
-lifetime outside 1-1440 minutes. Development settings contain a clearly named public
-fixture key only. Outside development supply a separate randomly generated secret
-through `Jwt__SigningKey`; never commit it. `.env.example` lists all variables, but
-`dotnet run` does not load `.env` automatically. The frontend uses sessionStorage as
-described in Step 4. JWTs are signed, not encrypted; do not place secrets in claims.
-
-For a manual check, start SQL Server and the API as in Quick start, then run:
+.NET 10 Web API, React 19/TypeScript and SQL Server. Tasks 1-3 are implemented;
+Task 4 (API containerization) and the optional SLA report are not implemented.
+Requirements: [assessment PDF](ASSIGNMENT_CANDIDATE.pdf). Design reasoning, verification
+and the step-by-step record are in [APPROACH.md](APPROACH.md).
+
+## Run and log in
+
+Install the .NET SDK from `global.json`, Node from `.nvmrc` (Node 22), and Docker.
+Run from the repository root:
 
 ```powershell
-$login = Invoke-RestMethod -Method Post -Uri http://localhost:5043/api/auth/login `
-    -ContentType 'application/json' `
-    -Body '{"email":"alex.turner@northwind-support.example","password":"Northwind_LocalDemo_Only1!"}'
-Invoke-RestMethod -Uri http://localhost:5043/api/auth/me `
-    -Headers @{ Authorization = "Bearer $($login.accessToken)" }
+npm ci
+npm run db:up
+npm run api                    # terminal 1, after SQL Server is healthy
+npm run web                    # terminal 2
 ```
 
-The `SupportDesk.ApiTests` project runs the actual HTTP endpoints, validation and JWT
-middleware against isolated SQLite databases with the reusable FixedClock. It is
-included in `dotnet test`/`npm test` and does not require SQL Server. Tests cover valid
-login/current user, case-insensitive email, generic failures, missing credentials,
-invalid input, missing/malformed/expired/tampered tokens, incorrect issuer/audience,
-and deactivation after login.
+Open [the web app](http://localhost:5173/login). Public local development credentials:
 
-Step 2 verification on 2026-10-17 passed 188 backend unit/integration tests, four
-architecture tests and 14 HTTP authentication tests (206 total). The API and test
-projects built in Release and whitespace checks passed. NuGet audit completed after
-refreshing restore metadata; only the previously documented Pkcs warnings remain.
+```text
+Email:    alex.turner@northwind.com
+Password: northwind_alexturner
+```
 
-#### Task 3, step 3: central authorization and trustworthy escalation actors
+Ben, Priya, Sara and Marcus retain `Northwind_LocalDemo_Only1!` at their seeded
+`first.last@northwind-support.example` addresses. Yuki is inactive and cannot sign in.
+These are demo credentials, never production credentials. SQL Server's separate
+local fixture is `sa` / `Local_Dev_Password1`.
 
-One fallback authorization policy in Program requires an authenticated user on every
-endpoint unless explicitly anonymous. `/api/auth/login` remains anonymous. Development
-Swagger middleware runs before authorization and remains open. A future `/health`
-endpoint must explicitly opt out when Task 4 adds it. CORS preflight is handled before
-authentication. No list of per-controller authorization attributes is needed.
+The API listens at `https://localhost:7043` and `http://localhost:5043`;
+[Swagger](https://localhost:7043/swagger) stays open in Development. Vite proxies
+`/api` to the API. If necessary, set `VITE_API_PROXY_TARGET=http://localhost:5043`
+in the web terminal before starting it. Stop the database with `npm run db:down`.
 
-After checking the JWT signature and claims, bearer authentication verifies that `sub`
-is a positive agent ID and that the agent still exists and is active. Deactivating an
-agent therefore rejects their existing token on all protected calls. This adds one
-small database lookup per authenticated request; database outages remain server errors.
+Development startup applies migrations and seeds 40 tickets, six agents, six
+customers and five categories. Existing demo databases receive missing password
+hashes without resetting established credentials or ticket data. Alex's previous demo
+email/shared password are upgraded in place to the credentials above; his agent ID and
+ticket relationships are preserved. This change is applied once, not on every restart.
+Compose reads
+`.env` if you copy `.env.example`; `dotnet run` does not load it automatically.
+Set process environment variables such as `$env:ConnectionStrings__Default` to
+override API settings. Never commit `.env` or real credentials. Visual Studio:
+open `SupportDesk.sln`, select SupportDesk.Presentation and use the https profile.
 
-Escalation accepts only `{ "reason": "..." }`. The controller takes the agent ID from
-the validated principal and passes it separately to the application handler. History
-stores `agent:<id>` (for example `agent:1`) in the existing 100-character EscalatedBy
-column. This stable identifier survives name/email changes and avoids truncating a
-256-character email. Existing history is preserved as originally recorded. The domain
-still validates its actor value; the HTTP request validator only validates the reason.
-Extra legacy JSON fields such as `escalatedBy` are ignored and cannot select the actor.
-The form and TypeScript payload no longer offer or submit an actor field.
+## What changed
 
-HTTP tests check all existing endpoint methods against missing, malformed and expired
-tokens, ensure valid tokens can read each resource, and verify fallback protection on
-a test-only new controller without an authorization attribute. Forged actor tests log
-in as two agents and check the response, history endpoint and stored history row. They
-also check invalid/missing subject IDs, deactivated users, and unchanged 400/404/409
-escalation behavior. The test-only controller is not included in the production app.
+**Task 1:** DEFECT-117 came from a fetching effect that watched search and pagination
+but omitted other filters, so changing Status alone sent no request. The hook now
+observes the complete filter object; dropdowns request immediately, search alone
+is debounced 300 ms, and older responses cannot replace newer results. A regression
+test asserts the request and failed against the original hook.
 
-Step 3 introduced API protection; Step 4 below adds the browser login/session flow.
-The PowerShell login example above remains useful for checking endpoints directly.
+`TicketQueries.ApplyFilters` applies exact-match status/priority/category/customer/
+agent, unassigned-only, title/reference/customer-name search and SLA predicates in
+SQL before COUNT, sorting and paging. Filters combine with AND; High means High only.
+Relational tests inspect query results and generated COUNT/page SQL. To check manually,
+change Status alone with Network open, then combine filters and inspect the API SQL log.
+New filters belong in this same query composition method.
 
-Step 3 verification on 2026-10-17 passed 184 backend unit/integration tests, four
-architecture tests, 22 HTTP tests and 43 frontend tests. Backend test counts dropped
-by four and frontend counts by two because caller-supplied actor validation is no
-longer part of the contract; HTTP tests now cover trusted identity and forgery instead.
-Web lint, TypeScript checking, the production web build, Release API/test builds and
-whitespace checks passed. Existing dependency warnings remain. The checks used
-isolated SQLite databases and did not change the local SQL Server data.
+**Task 2:** Creation respects requested priority (default Medium), except flagged
+categories force Critical. Base SLA windows are Critical 4h, High 8h, Medium 24h and
+Low 72h; Premium halves the window with a 1h floor. Active agents must be strictly
+below capacity and specialized where required. Fewest open tickets wins, then lowest
+ID; no eligible agent is a successful unassigned outcome with an explanation.
+Escalation raises priority one step, recomputes the deadline from now, retains an
+eligible owner or reassigns, and writes immutable before/after history. Critical,
+Resolved and Closed tickets return 409; bad reasons return 400; missing tickets 404.
 
-#### Task 3, step 4: browser login and session handling
+SLA status is derived with an injectable clock: No SLA, Met, Breached, At risk
+(25% or less remaining), or Within SLA. Exactly at the deadline is At risk; one tick
+after is Breached. The UI shares one labelled indicator, filters SLA in SQL, shows
+triage after creation, and supports escalation/history with validation, pending,
+error/retry and conflict states without a full reload.
 
-Visit `/login`, or open any protected page to be redirected there. Use
-`alex.turner@northwind-support.example` / `Northwind_LocalDemo_Only1!` (or another
-active seeded agent). Successful login returns to the intended local path, including
-query and fragment, or `/tickets`. External destinations and login loops are rejected.
-The form has labelled email/password fields, linked validation errors, browser password
-manager hints, a disabled pending state, duplicate-submit protection and server errors.
-Passwords are submitted as entered, never persisted, and cleared after success.
+**Task 3:** Agents sign in, all existing API endpoints require a valid token through
+one fallback policy, and escalation records the authenticated agent. The browser
+provides login, protected routes, signed-in name, logout and expired-session handling.
 
-The signed-in agent's name and Log out button appear in the header. The session is
-stored in memory and sessionStorage under `northwind.auth.session`; it includes only
-the token, expiry and user profile. sessionStorage survives a refresh in the same tab
-but is ordinarily cleared when the tab closes. If browser storage is unavailable,
-login continues in memory and a refresh will require signing in again.
+## Authentication and design decisions
 
-Refresh first checks `/api/auth/me` before rendering or fetching protected content.
-The server profile replaces saved profile information. A rejected token clears the
-session; a network/server failure shows retry and return-to-login actions without
-discarding credentials. The shared API client attaches the bearer token to all
-authenticated calls and clears the matching session on any 401, including empty-body
-responses. Login calls remain anonymous. Expiry timers and a focus check also return
-the user to login without waiting for an API call. Late responses from an older
-session cannot clear or restore over a newer login.
+Credentials use a nullable `Agent.PasswordHash` column because existing agents are
+the only users; a second Users table adds no useful identity mapping here. Null
+supports migration of existing rows and cannot authenticate. ASP.NET Core Identity's
+`PasswordHasher<Agent>` hashes and salts each development password at seed time;
+only the encoded hash reaches the database. Verification supports rehashing when
+Identity requests an upgrade. Passwords/hashes are never returned in API DTOs.
 
-Trade-off: sessionStorage is readable by JavaScript, so an XSS vulnerability can steal
-the token. An HttpOnly-cookie design with CSRF protection would be preferable for a
-production session architecture. Client guards are only navigation behavior; server
-authorization remains the security boundary. Logout clears this tab's credentials;
-it does not revoke a copied JWT or sign out other tabs. A copied token can remain
-valid until expiry unless the agent is deactivated. Refresh tokens and revocation
-infrastructure are outside this assessment's scope.
+`POST /api/auth/login` accepts email/password and returns `accessToken`, `expiresAtUtc`
+and `user` (id, fullName, email). Email is trimmed and matched case-insensitively;
+passwords are not trimmed. Unknown email, wrong password, inactive agent and missing
+credentials share a generic 401. Invalid field shapes return 400. `/api/auth/me`
+returns the current active agent or 401. Protected calls use `Authorization: Bearer`.
 
-Frontend tests exercise the real shared client and complete route tree, covering
-login, validation, rejected credentials, deep links, logout, refresh verification,
-restoration retry, automatic expiry, protected-call 401s, blocked/corrupt storage,
-safe return paths and old-session response races. Headless Edge checks of the built
-app use mocked API responses for desktop/mobile layout, successful/rejected login,
-authenticated headers, return navigation, refresh, 401 and logout. These browser
-checks do not mutate SQL Server or replace the backend HTTP tests from Step 3.
+JWTs use HS256, a 60-minute lifetime, zero expiry grace, and a stable agent ID in
+`sub`, plus name/email/jti. `Jwt:Issuer`, `Audience`, `SigningKey` and `LifetimeMinutes`
+come from configuration; `.env.example` lists the environment overrides. Startup
+requires issuer/audience, a key of at least 32 UTF-8 bytes, and a lifetime of 1-1440
+minutes. The Development key is a public local fixture. Supply a separate random
+`Jwt__SigningKey` outside Development, never a literal in C# or a committed real secret.
+Middleware checks signature/algorithm/issuer/audience/lifetime and active-agent status.
 
-Step 4 verification on 2026-10-17 passed 77 frontend tests across 11 files, lint,
-TypeScript checking, the production web build and whitespace checks. Headless Edge
-passed the browser checks above, and desktop/mobile screenshots were visually reviewed.
-Backend code was unchanged in this step; the 210 backend tests passed in Step 3.
+Escalation accepts only `{"reason":"Customer cannot continue working."}`. The
+controller passes the validated agent ID separately to the application handler;
+history stores `agent:<id>`, which survives email/name changes and fits the existing
+100-character column. Extra caller-supplied actor fields are ignored. The form has
+no editable actor. Existing history is preserved.
 
-### Testing and verification
+The shared frontend client attaches tokens and clears the matching session on any
+protected-call 401. Session data lives in memory and `sessionStorage` under
+`northwind.auth.session`, surviving refreshes within a tab; passwords are never saved.
+Refresh validates `/me` before protected pages mount. Transient failures offer retry
+without losing credentials; expiry timers/focus checks and logout clear the session.
+Login returns to a safe local destination. Delayed responses cannot overwrite or
+invalidate a newer session. If storage is blocked, login works in memory only.
 
-Run these commands from the repository root. Release avoids Windows Debug assembly
-locks if the development API is running:
+Trade-off: JavaScript can read sessionStorage, so XSS can steal a token. A production
+session design could use HttpOnly cookies with CSRF protection. Client guards are
+navigation behavior; the API enforces authorization. Logout clears this tab, without
+revoking copied tokens or signing out other tabs. A copied token may remain valid
+until expiry unless its agent is deactivated. Refresh tokens/revocation are out of scope.
+
+Priority, SLA and assignment policies are plain domain logic shared by creation and
+escalation; application handlers coordinate queries and one save; controllers map HTTP.
+Configuration supplies SLA values and category flags, rather than category-name checks.
+One expression supplies runtime/SQL SLA evaluation. I kept abstractions at database/
+authentication seams and rejected per-policy interfaces, event sourcing and new state
+libraries. The frontend uses a small subscribed store with `useSyncExternalStore`.
+
+## Database and API
+
+`TicketEscalationAndSlaWindows` adds history, window timestamps and ticket revision
+concurrency. `IX_TicketEscalations_Ticket_Time_Id` supports stable newest-first history;
+restricted foreign keys, EF guards and a SQL Server trigger protect it. Updates and
+history inserts share a transaction, and stale changes return 409. `AgentPasswordCredentials`
+adds nullable `PasswordHash` (512 characters). Run `npm run db:migrate` explicitly if needed.
+
+Protected endpoints cover ticket list/detail/create/status/assignment, customer
+list/detail, agents, categories, escalation and history. Create returns 201 with
+triage; `POST /api/tickets/{id}/escalate` returns the updated ticket and recorded
+escalation; `GET /api/tickets/{id}/escalations` returns newest first. Lists accept
+`search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`,
+`unassignedOnly`, `slaStatus`, `sortBy`, `sortDirection`, page and pageSize.
+Errors use 400 validation, 401 authentication, 404 missing resource and 409 conflict.
+
+## Verify
 
 ```powershell
-$env:Configuration = 'Release'
+$env:Configuration = 'Release'   # avoids Debug file locks when the API is running
 npm test
 npm run lint
 npm run typecheck
 npm run build
 ```
 
-Verification on 2026-10-16 passed **185 backend unit/integration tests, 4 architecture
-tests and 45 frontend tests**, lint, typecheck, full build and whitespace checks.
-EF confirmed no model changes missing from the migration. Backend tests use FixedClock,
-TicketBuilder and isolated SQLite databases to cover priorities/tiers, the SLA floor,
-assignment eligibility/ties, escalation/rejections, rollback, concurrency, history and
-exact SLA boundaries. SQL tests check filtering before count and paging. Frontend tests
-use the real API client with mocked HTTP to cover validation, 409 preserving the
-screen, pending submissions, refresh/retry, SLA labels and triage outcomes.
+Tests need no external database: 186 backend unit/integration tests, four architecture
+tests, 22 HTTP authentication tests and 77 frontend tests (289 total). On Windows,
+`dotnet test --configuration Release -m:1 -p:UseSharedCompilation=false` is an
+alternative backend command if compiler workers stall. The full repository build
+passed; existing NU1902/NU1903 warnings for transitive Pkcs 9.0.11 remain.
 
-Final live checks passed 29 assertions for SLA/priority filters, paging and 400/404/409
-responses. Browser checks confirmed At risk filtering, detail indicators, short-reason
-validation and disabled escalation. Earlier disposable SQL Server checks covered empty
-and legacy database migrations, successful creation/escalation, concurrency and history
-immutability. No successful mutations were performed in the final review pass.
+Tests reuse FixedClock/TicketBuilder and isolated SQLite, covering query SQL, rules,
+SLA boundaries, rollback/concurrency/history, authentication and forgery. Frontend
+tests use the real client/routes with mocked HTTP, including refresh, logout, 401,
+corrupt storage, safe redirects and old-session races. Desktop/mobile browser checks
+also passed with mocked API responses. Final isolated SQL Server checks passed
+36 live API assertions and verified fresh and existing-schema migrations. Real
+browser/API/SQL checks passed login, escalation, history, refresh, 401 recovery and
+logout; the temporary database and servers were removed afterwards.
 
-A permanent end-to-end browser suite and load/global capacity-reservation tests were
-not added; page tests cover UI save/error flows, and global reservation is outside
-this implementation. For a manual check, create a Security ticket for a Premium
-customer and inspect Critical/2h triage. Escalate an eligible ticket and refresh to
-check persistence. Open the same High ticket in two tabs, escalate in the first and
-submit from the unrefreshed second: expect 409, then use Reload ticket.
+## AI usage, limitations and submission
 
-### AI usage
+Codex assisted with implementation, tests, debugging, SQL/browser checks and docs.
+Small changes against the PDF followed by relational/HTTP/UI tests worked well.
+The generated shared-policy structure was retained; a generated EF history projection
+was reordered after translation failed, and stale-response handling was corrected.
+Task 3 tests also exposed configuration binding before test-host overrides; resolution
+now occurs against the built host. Redirect validation was tightened for encoded and
+trailing-slash login paths. I verified generated code with tests, types, lint, builds,
+SQL checks and browser checks, and must be able to explain the submitted code.
 
-Codex assisted with planning, implementation, tests, debugging, SQL checks and docs.
-A useful workflow was implementing small pieces against the PDF and checking each
-with relational tests and HTTP calls. The generated deterministic policy structure
-was retained largely as-is. A generated history query was changed after relational
-tests exposed an EF translation failure: filtering and sorting now happen before DTO
-projection. Review also found an older history request could overwrite refreshed data;
-request guards and regression tests fix it. Generated code was checked through tests,
-types, lint, builds, SQL/HTTP assertions and browser checks. The candidate must review
-and be able to explain the submitted code.
+Task 4 remains unfinished: Compose runs SQL Server only, with no API image or image-size
+measurement. A real deployment should run migrations as a controlled deployment job,
+not rely on Development startup/seeding. The optional report is deferred. Cross-ticket
+assignment uses a workload snapshot and can exceed capacity under simultaneous creates;
+the reference generator retains its concurrency limitation. Triage reasons are returned
+but not persisted for later GETs. Registration, password reset, roles, OAuth/SSO,
+refresh tokens, MFA and rate limiting were deliberately not added.
 
-### Known limitations and remaining submission work
-
-API packaging remains unfinished. Browser sessions use JavaScript-readable storage;
-logout does not revoke already-issued tokens, and there is no cross-tab logout.
-Assignment uses a workload snapshot, so simultaneous different tickets can exceed
-capacity. The starter reference generator retains its concurrency limitation. History
-stores agent IDs, so displayed names reflect current agent names. Triage reasons are
-returned for create/escalate operations and are not persisted for later GET requests.
-The optional SLA report remains deferred. Existing NU1902/NU1903 warnings for transitive
-`System.Security.Cryptography.Pkcs` 9.0.11 remain; Task 2 changed no dependencies.
-
-Keep the separate implementation commits and include the actual time spent with the
-final submission. The original effort estimates above are not a record of time spent.
+Keep the focused commits and merge the Task 3 PR into your fork's main with a merge
+commit. Before submitting, include the fork/PR link, development login and your actual
+rough time spent; assignment estimates are not a record of time spent. Read
+[APPROACH.md](APPROACH.md) for implementation details and trade-offs.

@@ -217,3 +217,47 @@ refresh, bearer attachment, 401 redirects and logout using deterministic mock re
 Verification passed all 77 frontend tests, lint, TypeScript checking and the production
 build. Desktop/mobile screenshots were reviewed; headless Edge reported no page errors.
 The browser checks used mocked HTTP and did not modify the local SQL Server database.
+
+## Task 3, step 5: final review and real-stack verification
+
+I compared the final branch with AU-1 through AU-13 and the PDF's definition of done.
+All thirteen requirements were satisfied. All 287 automated tests,
+lint, type checking, the root build and the EF migration-model check passed. The only
+dependency warnings are the existing transitive Pkcs warnings.
+
+Earlier frontend browser checks used mocked HTTP. Final verification added a separate
+real API and web server connected to a disposable SQL Server database. Fresh startup
+applied the migrations and provisioned six separately salted hashes. Live HTTP checks
+covered authentication, Swagger, CORS, protected endpoints, filtering, triaged creation,
+authenticated escalation and persistent history. Headless Edge then exercised the real
+login/escalation/refresh/401/logout flow at desktop and mobile sizes.
+
+To check the user's actual upgrade path without modifying their database, I reverted
+only the credential migration in that disposable database, retaining 41 tickets and
+two history rows. Startup upgraded the schema again and seeded six missing hashes;
+counts, login and history were preserved. The temporary database/servers were removed.
+No additional application-code change was needed after the final review.
+
+I replaced the growing per-step README history with a concise reviewer guide, fixed
+the assignment link and retained detailed reasoning here. The PR description is
+provided separately for copying into GitHub rather than stored in the repository.
+Actual candidate time spent remains for the candidate to supply; no estimate was
+invented. The implementation commits are preserved, and merging remains a separate
+review action after this final documentation commit.
+
+## Development credential update
+
+Alex's development login is now `alex.turner@northwind.com` / `northwind_alexturner`.
+Fresh databases hash that password; the existing development seeder upgrades the old
+Alex fixture in place, preserving his ID and relationships. It also handles an email
+already changed while the old shared fixture password is still present. Subsequent
+runs preserve the new hash. Other agents retain their credentials, and an independently
+changed password on the new Alex account is preserved. These are public local fixtures,
+not production credentials. Regression tests cover both existing-account upgrade paths.
+
+The separate review-checklist and PR-description files were removed at the candidate's
+request. This document and README remain the repository's handover documentation.
+
+Verification after the credential change passed 186 backend unit/integration tests,
+four architecture tests, 22 HTTP tests and 77 frontend tests (289 total), including
+both existing-Alex upgrade cases and preservation of independently changed passwords.
