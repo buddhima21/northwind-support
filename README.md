@@ -1,195 +1,104 @@
 # Northwind Support Desk
 
-.NET 10 Web API, React 19/TypeScript and SQL Server. Tasks 1-3 are implemented;
-Task 4 (API containerization) and the optional SLA report are not implemented.
-Requirements: [assessment PDF](ASSIGNMENT_CANDIDATE.pdf). Design reasoning, verification
-and the step-by-step record are in [APPROACH.md](APPROACH.md).
+.NET 10 API, React 19/TypeScript and SQL Server. Tasks 1–4 are implemented against [the assessment](ASSIGNMENT_CANDIDATE.pdf). [APPROACH.md](APPROACH.md) summarises each task.
 
-## Run and log in
+## What I implemented
 
-Install the .NET SDK from `global.json`, Node from `.nvmrc` (Node 22), and Docker.
-Run from the repository root:
+Server-side filtering, automatic triage and assignment, escalation history, SLA indicators, agent authentication and API containerisation. Requested priority defaults to Medium; category flags can force Critical. SLA windows are Critical 4h, High 8h, Medium 24h and Low 72h. Premium customers receive half the window with a one-hour minimum. Assignment chooses an active, eligible specialist where required, strictly below capacity, with the fewest open tickets; lowest agent ID breaks ties. No eligible agent means an unassigned ticket with an explanation.
+
+Escalation requires a 5–500-character reason, raises priority one level, recalculates the deadline from escalation time and retains the owner only if eligible. Critical, Resolved and Closed tickets return 409. Each escalation records immutable history. SLA status is derived: no deadline means NotApplicable; resolution on/before the deadline is Met, late resolution is Breached; unresolved tickets are Breached after the deadline, AtRisk with 25% or less remaining, otherwise WithinSla.
+
+## Design decisions
+
+Priority, SLA and assignment policies are reused by creation and escalation. Handlers coordinate persistence; controllers translate HTTP. `Ticket.RaiseTriaged` constructs tickets from policy decisions, and one SLA expression serves both runtime and SQL evaluation. Configuration/category flags supply rules. I rejected duplicated controller logic, category-name checks and per-policy interfaces because they add maintenance without useful boundaries.
+
+Agents are the required users, so credentials belong on Agent rather than another table. Identity's password hasher and JWT middleware avoid custom cryptography. Database/authentication interfaces provide implementation seams. The existing frontend client and a small session store were sufficient; Redux, MediatR and event sourcing were unnecessary.
+
+## The defect
+
+DEFECT-117 occurred because fetch-effect dependencies omitted dropdown filters. The hook now observes the complete filter object, debounces only search for 300 ms and ignores stale responses. The request-based regression test failed against the original hook. Verify in Network: changing Status alone sends `/api/tickets?status=...` immediately; search waits for the debounce.
+
+## Filtering
+
+`TicketQueries.ApplyFilters` composes EF predicates before COUNT, sorting and paging. Exact matches, unassigned-only, trimmed title/reference/customer search and SLA predicates combine with AND. Relational SQLite tests inspect COUNT/page SQL, and SQL Server development logs were checked during live requests. Add the next predicate in this method, extend the query/client filter contract and add a relational test; no client-side row filtering is needed.
+
+## Authentication
+
+Credentials live in `Agent.PasswordHash`. `PasswordHasher<Agent>` creates salted hashes and supports rehashing; missing credentials and inactive agents cannot authenticate. Login returns the same generic 401 for invalid credentials. HS256 JWTs contain the stable agent ID, expire after 60 minutes and are validated for signature, issuer, audience, expiry and active-agent status. A fallback policy protects endpoints centrally; login and `/health` explicitly allow anonymous access. Escalation uses the authenticated ID, never a caller-supplied actor.
+
+The client stores token, expiry and profile in memory/sessionStorage, never passwords. Refresh validates `/api/auth/me`; expiry, protected-call 401 and logout clear the session. JavaScript-readable tokens remain vulnerable to XSS. Production would require HTTPS, a separate signing key, abuse protection and a reviewed session/revocation design; HttpOnly cookies with CSRF protection are an alternative.
+
+## How to log in
+
+### Run with Docker
+
+Install Node 22 and Docker Desktop with Linux containers enabled. Start Docker Desktop and run these PowerShell commands from the repository root:
 
 ```powershell
 npm ci
-npm run db:up
-npm run api                    # terminal 1, after SQL Server is healthy
-npm run web                    # terminal 2
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+docker compose config --quiet
+docker compose up --build -d
 ```
 
-Open [the web app](http://localhost:5173/login). Public local development credentials:
-
-```text
-Email:    alex.turner@northwind.com
-Password: northwind_alexturner
-```
-
-Ben, Priya, Sara and Marcus retain `Northwind_LocalDemo_Only1!` at their seeded
-`first.last@northwind-support.example` addresses. Yuki is inactive and cannot sign in.
-These are demo credentials, never production credentials. SQL Server's separate
-local fixture is `sa` / `Local_Dev_Password1`.
-
-The API listens at `https://localhost:7043` and `http://localhost:5043`;
-[Swagger](https://localhost:7043/swagger) stays open in Development. Vite proxies
-`/api` to the API. If necessary, set `VITE_API_PROXY_TARGET=http://localhost:5043`
-in the web terminal before starting it. Stop the database with `npm run db:down`.
-
-Development startup applies migrations and seeds 40 tickets, six agents, six
-customers and five categories. Existing demo databases receive missing password
-hashes without resetting established credentials or ticket data. Alex's previous demo
-email/shared password are upgraded in place to the credentials above; his agent ID and
-ticket relationships are preserved. This change is applied once, not on every restart.
-Compose reads
-`.env` if you copy `.env.example`; `dotnet run` does not load it automatically.
-Set process environment variables such as `$env:ConnectionStrings__Default` to
-override API settings. Never commit `.env` or real credentials. Visual Studio:
-open `SupportDesk.sln`, select SupportDesk.Presentation and use the https profile.
-
-## What changed
-
-**Task 1:** DEFECT-117 came from a fetching effect that watched search and pagination
-but omitted other filters, so changing Status alone sent no request. The hook now
-observes the complete filter object; dropdowns request immediately, search alone
-is debounced 300 ms, and older responses cannot replace newer results. A regression
-test asserts the request and failed against the original hook.
-
-`TicketQueries.ApplyFilters` applies exact-match status/priority/category/customer/
-agent, unassigned-only, title/reference/customer-name search and SLA predicates in
-SQL before COUNT, sorting and paging. Filters combine with AND; High means High only.
-Relational tests inspect query results and generated COUNT/page SQL. To check manually,
-change Status alone with Network open, then combine filters and inspect the API SQL log.
-New filters belong in this same query composition method.
-
-**Task 2:** Creation respects requested priority (default Medium), except flagged
-categories force Critical. Base SLA windows are Critical 4h, High 8h, Medium 24h and
-Low 72h; Premium halves the window with a 1h floor. Active agents must be strictly
-below capacity and specialized where required. Fewest open tickets wins, then lowest
-ID; no eligible agent is a successful unassigned outcome with an explanation.
-Escalation raises priority one step, recomputes the deadline from now, retains an
-eligible owner or reassigns, and writes immutable before/after history. Critical,
-Resolved and Closed tickets return 409; bad reasons return 400; missing tickets 404.
-
-SLA status is derived with an injectable clock: No SLA, Met, Breached, At risk
-(25% or less remaining), or Within SLA. Exactly at the deadline is At risk; one tick
-after is Breached. The UI shares one labelled indicator, filters SLA in SQL, shows
-triage after creation, and supports escalation/history with validation, pending,
-error/retry and conflict states without a full reload.
-
-**Task 3:** Agents sign in, all existing API endpoints require a valid token through
-one fallback policy, and escalation records the authenticated agent. The browser
-provides login, protected routes, signed-in name, logout and expired-session handling.
-
-## Authentication and design decisions
-
-Credentials use a nullable `Agent.PasswordHash` column because existing agents are
-the only users; a second Users table adds no useful identity mapping here. Null
-supports migration of existing rows and cannot authenticate. ASP.NET Core Identity's
-`PasswordHasher<Agent>` hashes and salts each development password at seed time;
-only the encoded hash reaches the database. Verification supports rehashing when
-Identity requests an upgrade. Passwords/hashes are never returned in API DTOs.
-
-`POST /api/auth/login` accepts email/password and returns `accessToken`, `expiresAtUtc`
-and `user` (id, fullName, email). Email is trimmed and matched case-insensitively;
-passwords are not trimmed. Unknown email, wrong password, inactive agent and missing
-credentials share a generic 401. Invalid field shapes return 400. `/api/auth/me`
-returns the current active agent or 401. Protected calls use `Authorization: Bearer`.
-
-JWTs use HS256, a 60-minute lifetime, zero expiry grace, and a stable agent ID in
-`sub`, plus name/email/jti. `Jwt:Issuer`, `Audience`, `SigningKey` and `LifetimeMinutes`
-come from configuration; `.env.example` lists the environment overrides. Startup
-requires issuer/audience, a key of at least 32 UTF-8 bytes, and a lifetime of 1-1440
-minutes. The Development key is a public local fixture. Supply a separate random
-`Jwt__SigningKey` outside Development, never a literal in C# or a committed real secret.
-Middleware checks signature/algorithm/issuer/audience/lifetime and active-agent status.
-
-Escalation accepts only `{"reason":"Customer cannot continue working."}`. The
-controller passes the validated agent ID separately to the application handler;
-history stores `agent:<id>`, which survives email/name changes and fits the existing
-100-character column. Extra caller-supplied actor fields are ignored. The form has
-no editable actor. Existing history is preserved.
-
-The shared frontend client attaches tokens and clears the matching session on any
-protected-call 401. Session data lives in memory and `sessionStorage` under
-`northwind.auth.session`, surviving refreshes within a tab; passwords are never saved.
-Refresh validates `/me` before protected pages mount. Transient failures offer retry
-without losing credentials; expiry timers/focus checks and logout clear the session.
-Login returns to a safe local destination. Delayed responses cannot overwrite or
-invalidate a newer session. If storage is blocked, login works in memory only.
-
-Trade-off: JavaScript can read sessionStorage, so XSS can steal a token. A production
-session design could use HttpOnly cookies with CSRF protection. Client guards are
-navigation behavior; the API enforces authorization. Logout clears this tab, without
-revoking copied tokens or signing out other tabs. A copied token may remain valid
-until expiry unless its agent is deactivated. Refresh tokens/revocation are out of scope.
-
-Priority, SLA and assignment policies are plain domain logic shared by creation and
-escalation; application handlers coordinate queries and one save; controllers map HTTP.
-Configuration supplies SLA values and category flags, rather than category-name checks.
-One expression supplies runtime/SQL SLA evaluation. I kept abstractions at database/
-authentication seams and rejected per-policy interfaces, event sourcing and new state
-libraries. The frontend uses a small subscribed store with `useSyncExternalStore`.
-
-## Database and API
-
-`TicketEscalationAndSlaWindows` adds history, window timestamps and ticket revision
-concurrency. `IX_TicketEscalations_Ticket_Time_Id` supports stable newest-first history;
-restricted foreign keys, EF guards and a SQL Server trigger protect it. Updates and
-history inserts share a transaction, and stale changes return 409. `AgentPasswordCredentials`
-adds nullable `PasswordHash` (512 characters). Run `npm run db:migrate` explicitly if needed.
-
-Protected endpoints cover ticket list/detail/create/status/assignment, customer
-list/detail, agents, categories, escalation and history. Create returns 201 with
-triage; `POST /api/tickets/{id}/escalate` returns the updated ticket and recorded
-escalation; `GET /api/tickets/{id}/escalations` returns newest first. Lists accept
-`search`, `status`, `priority`, `categoryId`, `customerId`, `assignedAgentId`,
-`unassignedOnly`, `slaStatus`, `sortBy`, `sortDirection`, page and pageSize.
-Errors use 400 validation, 401 authentication, 404 missing resource and 409 conflict.
-
-## Verify
+Keep `ASPNETCORE_ENVIRONMENT=Development` for automatic migration and demo seeding. Wait for startup to finish; `curl.exe -i http://localhost:5080/health` should return `200 Healthy`. Check startup failures with `docker compose logs --tail 50 api sqlserver`. In a second terminal at the repository root, start the frontend:
 
 ```powershell
-$env:Configuration = 'Release'   # avoids Debug file locks when the API is running
+$env:VITE_API_PROXY_TARGET = 'http://localhost:5080'
+npm run web
+```
+
+Open http://localhost:5173/login. Email: **alex.turner@northwind.com**; password: **northwind_alexturner**. Other active agents use `Northwind_LocalDemo_Only1!` at `first.last@northwind-support.example`; Yuki is inactive. These are public development fixtures. Fresh startup seeds 40 tickets, six agents, six customers and five categories; existing demo records are preserved.
+
+### Run the API locally instead
+
+Install the .NET 10 SDK specified by `global.json` and run `npm ci` if dependencies are not installed. Start only SQL, then the API in the same terminal:
+
+```powershell
+npm run db:up
+# Once SQL is healthy (docker compose ps):
+dotnet run --project apps/api/src/SupportDesk.Presentation --launch-profile http
+```
+
+In a second terminal, run `$env:VITE_API_PROXY_TARGET = 'http://localhost:5043'`, then `npm run web`. The login URL and credentials are the same; Swagger is at http://localhost:5043/swagger. The host API uses `appsettings.Development.json`, not the root `.env`; export `ConnectionStrings__Default` in its terminal if SQL credentials differ from the defaults, using `localhost,1433` as the server.
+
+Stop the frontend/host API with Ctrl+C and stop the Compose backend with `docker compose down`. This retains the SQL volume. Do not use `down -v` unless you intend to delete its data.
+
+## Docker
+
+Use the startup commands above. To check backend readiness and the container user:
+
+```powershell
+curl.exe -i http://localhost:5080/health
+docker compose exec api whoami
+```
+
+The API maps localhost:5080 to HTTP 8080 and waits for healthy SQL. Its multi-stage build caches restore and runs as `app`; ignore rules exclude secrets, build output and the frontend. Standalone build: `docker build -f apps/api/Dockerfile -t northwind-support-api:dev .`. Runtime image: **433.8 MiB**, versus **1243.4 MiB** for the SDK.
+
+Runtime variables: `ASPNETCORE_ENVIRONMENT`, `ConnectionStrings__Default`, `Jwt__Issuer`, `Jwt__Audience`, `Jwt__SigningKey`, `Jwt__LifetimeMinutes` and SQL's `MSSQL_SA_PASSWORD` (see `.env.example`). Compose connects to `sqlserver,1433`; update older localhost overrides. Runtime credentials stay outside the image. Development migrates/seeds before serving. Production should run a reviewed migration script/bundle once in a deployment job, avoiding replica races and demo seeding. `docker compose down` preserves data; `down -v` deletes it.
+
+## Database
+
+`TicketEscalationAndSlaWindows` adds escalation history, SLA window fields and ticket revision concurrency; `AgentPasswordCredentials` adds nullable password hashes for existing agents. Ticket updates/history inserts share a transaction; stale updates return 409. Restricted foreign keys, EF guards and a SQL Server trigger protect history. `IX_TicketEscalations_Ticket_Time_Id` on `(TicketId, EscalatedAtUtc, Id)` supports per-ticket history retrieval with stable newest-first ordering. Development startup migrates automatically; `npm run db:migrate` is available for explicit local migration.
+
+## Testing
+
+```powershell
+$env:Configuration = 'Release'
 npm test
 npm run lint
 npm run typecheck
 npm run build
 ```
 
-Tests need no external database: 186 backend unit/integration tests, four architecture
-tests, 22 HTTP authentication tests and 77 frontend tests (289 total). On Windows,
-`dotnet test --configuration Release -m:1 -p:UseSharedCompilation=false` is an
-alternative backend command if compiler workers stall. The full repository build
-passed; existing NU1902/NU1903 warnings for transitive Pkcs 9.0.11 remain.
+Last recorded verification passed **289 tests**: 186 backend unit/integration, four architecture, 22 HTTP and 77 frontend. FixedClock/TicketBuilder and isolated SQLite cover rule boundaries, SQL, transactions, concurrency, history, authentication and session races without external SQL. Live SQL/browser checks covered authentication and escalation. Manual Docker verification covered empty-volume migration/seeding, persistence, restore caching, non-root execution, 200/503 health and the frontend proxy. Docker automation, load testing and out-of-scope account features were deliberately excluded.
 
-Tests reuse FixedClock/TicketBuilder and isolated SQLite, covering query SQL, rules,
-SLA boundaries, rollback/concurrency/history, authentication and forgery. Frontend
-tests use the real client/routes with mocked HTTP, including refresh, logout, 401,
-corrupt storage, safe redirects and old-session races. Desktop/mobile browser checks
-also passed with mocked API responses. Final isolated SQL Server checks passed
-36 live API assertions and verified fresh and existing-schema migrations. Real
-browser/API/SQL checks passed login, escalation, history, refresh, 401 recovery and
-logout; the temporary database and servers were removed afterwards.
+## AI usage
 
-## AI usage, limitations and submission
+I used OpenAI Cluade for code/test drafts, Chatgpt for debugging, SQL/browser checks, documentation and explanations. The useful workflow was one requirement, a small change, then diff review and verification before committing. I retained much of the generated shared-policy structure because it reused rules without framework dependencies in the domain.
 
-Codex assisted with implementation, tests, debugging, SQL/browser checks and docs.
-Small changes against the PDF followed by relational/HTTP/UI tests worked well.
-The generated shared-policy structure was retained; a generated EF history projection
-was reordered after translation failed, and stale-response handling was corrected.
-Task 3 tests also exposed configuration binding before test-host overrides; resolution
-now occurs against the built host. Redirect validation was tightened for encoded and
-trailing-slash login paths. I verified generated code with tests, types, lint, builds,
-SQL checks and browser checks, and must be able to explain the submitted code.
+I changed a generated escalation-history query after relational tests exposed an EF translation failure: filtering/ordering now happen before DTO projection. HTTP tests also exposed JWT configuration being resolved before test-host overrides; resolution moved to the built host while preserving startup validation. Generated code was checked with tests, SQL output, lint, type checking, builds, live API/browser checks and Docker inspection. These corrections were part of verification, not reasons to accept generated output without review.
 
-Task 4 remains unfinished: Compose runs SQL Server only, with no API image or image-size
-measurement. A real deployment should run migrations as a controlled deployment job,
-not rely on Development startup/seeding. The optional report is deferred. Cross-ticket
-assignment uses a workload snapshot and can exceed capacity under simultaneous creates;
-the reference generator retains its concurrency limitation. Triage reasons are returned
-but not persisted for later GETs. Registration, password reset, roles, OAuth/SSO,
-refresh tokens, MFA and rate limiting were deliberately not added.
+## Known limitations
 
-Keep the focused commits and merge the Task 3 PR into your fork's main with a merge
-commit. Before submitting, include the fork/PR link, development login and your actual
-rough time spent; assignment estimates are not a record of time spent. Read
-[APPROACH.md](APPROACH.md) for implementation details and trade-offs.
+The optional SLA report is deferred. Assignment uses a workload snapshot and can exceed capacity under concurrent ticket creation; the starter reference generator also has a concurrency limitation. Triage reasons are returned but not persisted. Logout affects the current tab and does not revoke copied JWTs; refresh tokens, registration, password reset and roles are out of scope. `/health` checks connectivity, not schema completeness. Existing NU1902/NU1903 vulnerability warnings for transitive `System.Security.Cryptography.Pkcs` 9.0.11 remain unresolved.
