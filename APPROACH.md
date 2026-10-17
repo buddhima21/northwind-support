@@ -175,10 +175,45 @@ commit so the client contract matches the server. Obsolete caller-actor validati
 tests were replaced with authenticated HTTP behavior tests. The tests include forged
 JSON actor fields for two distinct logins, persisted history, all current endpoint
 methods, and a new unannotated test endpoint proving the fallback policy applies.
-The browser login/session flow remains the next step; protected API access can be
-checked with the documented PowerShell commands until that work is complete.
+The browser login/session flow was added in Step 4. Protected API access can also be
+checked with the documented PowerShell commands.
 
 Verification passed 210 backend tests (184 unit/integration, four architecture and
 22 HTTP), 43 frontend tests, web lint, TypeScript checking and the production build.
 Obsolete actor-input validation cases account for the lower unit/frontend counts;
 the new HTTP cases verify actor provenance and central protection directly.
+
+## Task 3, step 4: login, routes and session lifecycle
+
+I extended the existing API client to attach tokens and invalidate the matching session
+on 401. Authentication endpoints use that client too, with login explicitly anonymous.
+A small subscribed session store is shared between React and the client, avoiding
+headers in components and avoiding a dependency from networking code on React Router.
+React reads the store with useSyncExternalStore; a single route guard controls the
+application shell and all ticket/customer pages, including unknown routes.
+
+I chose sessionStorage to preserve refreshes within a tab while limiting persistence.
+Only token, expiry and profile are saved; passwords never enter storage. This is not
+XSS-resistant, and logout does not revoke an issued JWT. I documented HttpOnly-cookie
+sessions with CSRF protection as a production alternative rather than changing the
+assignment's bearer-token contract or adding refresh/revocation infrastructure.
+
+Persisted credentials start in a restoring state. `/me` must succeed before protected
+pages mount, preventing stale profile data or an invalid token from exposing the UI.
+Transient server/network failures preserve the session and offer retry; 401 clears it.
+Timers handle expiry while mounted, and a focus check catches browser timer throttling.
+Restoration and 401 handlers compare token identity so an earlier request cannot erase
+or overwrite a later login. Logout removes credentials, unmounts protected content and
+returns to login. Destination validation restricts redirects to local non-login paths.
+
+The login screen reuses the existing Field component and styling, with labelled inputs,
+password-manager hints, matching input limits, pending/duplicate-submit protection and
+generic server rejection messages. No registration, reset-password, role management
+or new state-management dependency was added. Tests use the actual route tree under
+StrictMode, the actual API client with mocked HTTP, and saved-session restoration.
+Headless Edge checks of the production build verify desktop/mobile layouts, login,
+refresh, bearer attachment, 401 redirects and logout using deterministic mock responses.
+
+Verification passed all 77 frontend tests, lint, TypeScript checking and the production
+build. Desktop/mobile screenshots were reviewed; headless Edge reported no page errors.
+The browser checks used mocked HTTP and did not modify the local SQL Server database.

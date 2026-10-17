@@ -122,7 +122,7 @@ reasoning in more detail.
 | --- | --- |
 | Task 1: defect fix and server-side filtering | Implemented, tested and merged |
 | Task 2: ticket escalation and assignment | Backend and frontend implemented and verified |
-| Task 3: login and authentication | Steps 1-3: credentials, login/JWT, central API protection and authenticated escalation actor; login/session UI pending |
+| Task 3: login and authentication | Implemented: agent login/JWT, central API protection, authenticated actor, login/session UI and logout |
 | Task 4: API containerization | Not implemented yet; Compose starts SQL Server only |
 | Optional SLA summary report | Deferred until Tasks 1-3 are complete |
 
@@ -225,9 +225,9 @@ fixture, not an application login. Compose reads `.env`; `dotnet run` does not l
 it automatically. Set `$env:ConnectionStrings__Default` in the API terminal to
 override its database connection. Never commit `.env` or real credentials.
 
-Task 3 is in progress: password storage, development seeding, login/JWT issuance and
-authenticated `/api/auth/me`, central endpoint protection and the authenticated escalation
-actor are implemented. Login UI and browser token storage are pending. `escalatedBy`
+Task 3 is implemented: password storage, development seeding, login/JWT issuance,
+authenticated `/api/auth/me`, central endpoint protection, the authenticated escalation
+actor, login UI and browser session handling. `escalatedBy`
 is derived from the validated token and cannot be selected in the request body.
 Task 4 is also pending: there is no API image, image-size measurement or container
 migration workflow to report. The existing Compose service runs SQL Server, and the
@@ -290,8 +290,8 @@ Startup rejects missing issuer/audience, a key shorter than 32 UTF-8 bytes, or a
 lifetime outside 1-1440 minutes. Development settings contain a clearly named public
 fixture key only. Outside development supply a separate randomly generated secret
 through `Jwt__SigningKey`; never commit it. `.env.example` lists all variables, but
-`dotnet run` does not load `.env` automatically. Browser token storage is decided in
-the frontend step. JWTs are signed, not encrypted; do not place secrets in claims.
+`dotnet run` does not load `.env` automatically. The frontend uses sessionStorage as
+described in Step 4. JWTs are signed, not encrypted; do not place secrets in claims.
 
 For a manual check, start SQL Server and the API as in Quick start, then run:
 
@@ -344,9 +344,8 @@ in as two agents and check the response, history endpoint and stored history row
 also check invalid/missing subject IDs, deactivated users, and unchanged 400/404/409
 escalation behavior. The test-only controller is not included in the production app.
 
-At this intermediate commit, the API requires tokens but the browser login/session
-flow is not implemented yet. Use the PowerShell login example above to call protected
-endpoints until Step 4 adds token handling to the shared frontend API client.
+Step 3 introduced API protection; Step 4 below adds the browser login/session flow.
+The PowerShell login example above remains useful for checking endpoints directly.
 
 Step 3 verification on 2026-10-17 passed 184 backend unit/integration tests, four
 architecture tests, 22 HTTP tests and 43 frontend tests. Backend test counts dropped
@@ -355,6 +354,52 @@ longer part of the contract; HTTP tests now cover trusted identity and forgery i
 Web lint, TypeScript checking, the production web build, Release API/test builds and
 whitespace checks passed. Existing dependency warnings remain. The checks used
 isolated SQLite databases and did not change the local SQL Server data.
+
+#### Task 3, step 4: browser login and session handling
+
+Visit `/login`, or open any protected page to be redirected there. Use
+`alex.turner@northwind-support.example` / `Northwind_LocalDemo_Only1!` (or another
+active seeded agent). Successful login returns to the intended local path, including
+query and fragment, or `/tickets`. External destinations and login loops are rejected.
+The form has labelled email/password fields, linked validation errors, browser password
+manager hints, a disabled pending state, duplicate-submit protection and server errors.
+Passwords are submitted as entered, never persisted, and cleared after success.
+
+The signed-in agent's name and Log out button appear in the header. The session is
+stored in memory and sessionStorage under `northwind.auth.session`; it includes only
+the token, expiry and user profile. sessionStorage survives a refresh in the same tab
+but is ordinarily cleared when the tab closes. If browser storage is unavailable,
+login continues in memory and a refresh will require signing in again.
+
+Refresh first checks `/api/auth/me` before rendering or fetching protected content.
+The server profile replaces saved profile information. A rejected token clears the
+session; a network/server failure shows retry and return-to-login actions without
+discarding credentials. The shared API client attaches the bearer token to all
+authenticated calls and clears the matching session on any 401, including empty-body
+responses. Login calls remain anonymous. Expiry timers and a focus check also return
+the user to login without waiting for an API call. Late responses from an older
+session cannot clear or restore over a newer login.
+
+Trade-off: sessionStorage is readable by JavaScript, so an XSS vulnerability can steal
+the token. An HttpOnly-cookie design with CSRF protection would be preferable for a
+production session architecture. Client guards are only navigation behavior; server
+authorization remains the security boundary. Logout clears this tab's credentials;
+it does not revoke a copied JWT or sign out other tabs. A copied token can remain
+valid until expiry unless the agent is deactivated. Refresh tokens and revocation
+infrastructure are outside this assessment's scope.
+
+Frontend tests exercise the real shared client and complete route tree, covering
+login, validation, rejected credentials, deep links, logout, refresh verification,
+restoration retry, automatic expiry, protected-call 401s, blocked/corrupt storage,
+safe return paths and old-session response races. Headless Edge checks of the built
+app use mocked API responses for desktop/mobile layout, successful/rejected login,
+authenticated headers, return navigation, refresh, 401 and logout. These browser
+checks do not mutate SQL Server or replace the backend HTTP tests from Step 3.
+
+Step 4 verification on 2026-10-17 passed 77 frontend tests across 11 files, lint,
+TypeScript checking, the production web build and whitespace checks. Headless Edge
+passed the browser checks above, and desktop/mobile screenshots were visually reviewed.
+Backend code was unchanged in this step; the 210 backend tests passed in Step 3.
 
 ### Testing and verification
 
@@ -405,8 +450,8 @@ and be able to explain the submitted code.
 
 ### Known limitations and remaining submission work
 
-Frontend authentication and API packaging remain unfinished. The API now requires a
-token, so the web app needs the next login/session step before normal browser use works.
+API packaging remains unfinished. Browser sessions use JavaScript-readable storage;
+logout does not revoke already-issued tokens, and there is no cross-tab logout.
 Assignment uses a workload snapshot, so simultaneous different tickets can exceed
 capacity. The starter reference generator retains its concurrency limitation. History
 stores agent IDs, so displayed names reflect current agent names. Triage reasons are
