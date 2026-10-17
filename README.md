@@ -30,24 +30,45 @@ The client stores token, expiry and profile in memory/sessionStorage, never pass
 
 ## How to log in
 
-Use Docker and Node 22 (.NET 10 SDK for host tests/builds). Start the backend as described below, then run:
+### Run with Docker
+
+Install Node 22 and Docker Desktop with Linux containers enabled. Start Docker Desktop and run these PowerShell commands from the repository root:
 
 ```powershell
 npm ci
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
+docker compose config --quiet
+docker compose up --build -d
+```
+
+Keep `ASPNETCORE_ENVIRONMENT=Development` for automatic migration and demo seeding. Wait for startup to finish; `curl.exe -i http://localhost:5080/health` should return `200 Healthy`. Check startup failures with `docker compose logs --tail 50 api sqlserver`. In a second terminal at the repository root, start the frontend:
+
+```powershell
 $env:VITE_API_PROXY_TARGET = 'http://localhost:5080'
 npm run web
 ```
 
 Open http://localhost:5173/login. Email: **alex.turner@northwind.com**; password: **northwind_alexturner**. Other active agents use `Northwind_LocalDemo_Only1!` at `first.last@northwind-support.example`; Yuki is inactive. These are public development fixtures. Fresh startup seeds 40 tickets, six agents, six customers and five categories; existing demo records are preserved.
 
-## Docker
+### Run the API locally instead
 
-Run from the repository root; keep an existing `.env` rather than overwriting it:
+Install the .NET 10 SDK specified by `global.json` and run `npm ci` if dependencies are not installed. Start only SQL, then the API in the same terminal:
 
 ```powershell
-if (!(Test-Path .env)) { Copy-Item .env.example .env }
-docker compose up --build -d
-# After initial SQL startup and seeding:
+npm run db:up
+# Once SQL is healthy (docker compose ps):
+dotnet run --project apps/api/src/SupportDesk.Presentation --launch-profile http
+```
+
+In a second terminal, run `$env:VITE_API_PROXY_TARGET = 'http://localhost:5043'`, then `npm run web`. The login URL and credentials are the same; Swagger is at http://localhost:5043/swagger. The host API uses `appsettings.Development.json`, not the root `.env`; export `ConnectionStrings__Default` in its terminal if SQL credentials differ from the defaults, using `localhost,1433` as the server.
+
+Stop the frontend/host API with Ctrl+C and stop the Compose backend with `docker compose down`. This retains the SQL volume. Do not use `down -v` unless you intend to delete its data.
+
+## Docker
+
+Use the startup commands above. To check backend readiness and the container user:
+
+```powershell
 curl.exe -i http://localhost:5080/health
 docker compose exec api whoami
 ```
