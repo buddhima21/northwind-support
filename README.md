@@ -122,7 +122,7 @@ reasoning in more detail.
 | --- | --- |
 | Task 1: defect fix and server-side filtering | Implemented, tested and merged |
 | Task 2: ticket escalation and assignment | Backend and frontend implemented and verified |
-| Task 3: login and authentication | Not implemented yet |
+| Task 3: login and authentication | Step 1 complete: credentials, migration and development seed; login and authorization pending |
 | Task 4: API containerization | Not implemented yet; Compose starts SQL Server only |
 | Optional SLA summary report | Deferred until Tasks 1-3 are complete |
 
@@ -224,12 +224,44 @@ fixture, not an application login. Compose reads `.env`; `dotnet run` does not l
 it automatically. Set `$env:ConnectionStrings__Default` in the API terminal to
 override its database connection. Never commit `.env` or real credentials.
 
-Task 3 is pending: there is no login screen, password hashing, JWT issuance/storage,
-token lifetime or development application login yet. For Task 2, `escalatedBy` comes
+Task 3 is in progress: password storage and development credential seeding are implemented,
+but there is no login endpoint/screen, JWT issuance/storage or token lifetime yet. For Task 2, `escalatedBy` comes
 from the form/request body; authentication must replace it with the token identity.
 Task 4 is also pending: there is no API image, image-size measurement or container
 migration workflow to report. The existing Compose service runs SQL Server, and the
 API runs through the .NET SDK.
+
+#### Task 3, step 1: agent credentials
+
+Credentials live in a nullable `Agent.PasswordHash` column (maximum 512 characters),
+added by the `AgentPasswordCredentials` migration. Reusing Agent avoids a second user
+table and identity mapping because this assignment only authenticates existing agents.
+Null supports existing rows and means no credentials have been provisioned; the login
+step must reject such accounts. Agent DTOs do not expose the hash.
+
+Infrastructure uses ASP.NET Core Identity's `PasswordHasher<Agent>` from the shared
+ASP.NET framework for salted PBKDF2 hashing and verification. Domain code only holds
+the encoded hash and does not depend on ASP.NET. This does not add Identity user tables,
+registration or password-reset functionality.
+
+Development startup applies the migration and seeds all six demo agents with the public
+local fixture password `Northwind_LocalDemo_Only1!`. Example email:
+`alex.turner@northwind-support.example`. These credentials will become usable when the
+login endpoint is added. Yuki remains inactive and must be blocked by that endpoint.
+Only hashes are saved. Existing demo databases receive missing hashes without resetting
+existing credentials, creating credentials for other agents, or changing tickets. The
+seeder is called only during Development startup; never use this fixture in production.
+
+Tests check correct/incorrect password verification, distinct salts, all six persisted
+hashes, existing-database provisioning, preservation of existing passwords, repeat runs,
+and unchanged ticket counts. SQLite tests check persistence; SQL Server migration
+application must also be checked when running the app against the local database.
+
+Step 1 verification on 2026-10-17 passed 188 backend unit/integration tests and four
+architecture tests, the Release API build, the EF migration-model check and whitespace
+checks. Existing NU1902/NU1903 dependency warnings remain. In this Windows environment,
+the reliable backend test command was
+`dotnet test --configuration Release -m:1 -p:UseSharedCompilation=false`.
 
 ### Testing and verification
 

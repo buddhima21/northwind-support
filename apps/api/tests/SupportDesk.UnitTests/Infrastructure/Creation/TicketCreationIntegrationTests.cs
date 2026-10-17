@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Identity;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -48,7 +49,8 @@ public sealed class TicketCreationIntegrationTests : IAsyncLifetime
     {
         await _connection.OpenAsync();
         await _db.Database.EnsureCreatedAsync();
-        await new SupportDbSeeder(_db, _clock, _slaPolicy, NullLogger<SupportDbSeeder>.Instance).SeedAsync();
+        await new SupportDbSeeder(_db, _clock, _slaPolicy,
+            NullLogger<SupportDbSeeder>.Instance, new PasswordHasher<Agent>()).SeedAsync();
         _db.ChangeTracker.Clear();
     }
 

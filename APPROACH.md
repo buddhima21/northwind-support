@@ -102,3 +102,22 @@ workload snapshot, and the starter reference generator retains its concurrency
 limitation. The actor is caller-supplied until Task 3 adds authentication. The optional
 SLA summary report remains deferred. Existing dependency warnings are documented in
 README.md.
+
+## Task 3, step 1: credential storage and development provisioning
+
+I chose a PasswordHash column on Agent because the six agents are the required users;
+a separate Users table would introduce a mapping with no current use. The column is
+nullable so the migration preserves existing agents without fabricating credentials.
+Future login handling must reject missing hashes and inactive agents.
+
+ASP.NET Core Identity's PasswordHasher performs the salted hashing in Infrastructure,
+accessed through its built-in IPasswordHasher interface. The domain only accepts an
+encoded hash. The ASP.NET shared-framework reference provides the implementation
+without introducing the full Identity persistence system or a custom hash algorithm.
+
+The existing seeder skipped all work once tickets existed, so adding hashes only to
+fresh seed data would leave the current development database unable to log in. It now
+provisions null hashes for the exact six demo email addresses before returning. It
+preserves established hashes, other accounts, ticket data and Yuki's inactive status.
+Fresh databases hash the documented public development password separately per agent.
+Relational tests verify both fresh and existing-database paths and repeated seeding.

@@ -31,6 +31,15 @@ public sealed class Agent : AggregateRoot
 
     public string Email { get; private set; } = string.Empty;
 
+    /// <summary>Encoded salted password hash; null means credentials have not been provisioned.</summary>
+    public string? PasswordHash { get; private set; }
+
+    public void SetPasswordHash(string passwordHash)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(passwordHash);
+        PasswordHash = passwordHash;
+    }
+
     /// <summary>Inactive agents keep their history but take no new work.</summary>
     public bool IsActive { get; private set; }
 

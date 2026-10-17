@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Aggregates.Agents;
@@ -17,14 +18,23 @@ namespace SupportDesk.Infrastructure.Data;
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy slaPolicy, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    SlaPolicy slaPolicy,
+    ILogger<SupportDbSeeder> logger,
+    IPasswordHasher<Agent> passwordHasher)
 {
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    // Public local fixture only. Never use this password outside the development demo.
+    public const string DevelopmentPassword = "Northwind_LocalDemo_Only1!";
+
+    /// <summary>Seeds demo data and provisions missing credentials on existing demo agents.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
-            logger.LogInformation("Seed data already present; skipping.");
+            await SeedMissingDevelopmentCredentialsAsync(ct);
+            logger.LogInformation("Seed data already present; checked missing demo credentials.");
             return;
         }
 
@@ -33,6 +43,10 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy
         var categories = SeedCategories();
         var customers = SeedCustomers(now);
         var agents = SeedAgents(now);
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+        }
 
         db.AddRange(categories);
         db.AddRange(customers);
@@ -48,6 +62,21 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy
         logger.LogInformation(
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
+    }
+
+    private async Task SeedMissingDevelopmentCredentialsAsync(CancellationToken ct)
+    {
+        var demoEmails = SeedAgents(clock.UtcNow).Select(agent => agent.Email).ToArray();
+        var agents = await db.Set<Agent>()
+            .Where(agent => demoEmails.Contains(agent.Email) && agent.PasswordHash == null)
+            .ToListAsync(ct);
+
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, DevelopmentPassword));
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     private static List<Category> SeedCategories() =>

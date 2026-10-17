@@ -6,6 +6,7 @@
     queries and the system clock.
   -->
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../SupportDesk.Application/SupportDesk.Application.csproj" />
     <ProjectReference Include="../SupportDesk.Domain/SupportDesk.Domain.csproj" />
   </ItemGroup>

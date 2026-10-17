@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Repositories;
+using SupportDesk.Domain.Aggregates.Agents;
 using SupportDesk.Infrastructure.Data;
 using SupportDesk.Infrastructure.Queries;
 using SupportDesk.Infrastructure.Repositories;
@@ -44,6 +46,7 @@ public static class DependencyInjection
         services.AddScoped<ICategoryQueries, CategoryQueries>();
 
         services.AddScoped<SupportDbSeeder>();
+        services.AddScoped<IPasswordHasher<Agent>, PasswordHasher<Agent>>();
 
         return services;
     }
