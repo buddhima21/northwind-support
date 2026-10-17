@@ -1,6 +1,23 @@
-# SQL Server for local development only. The password below is a throwaway local
-# placeholder - never commit a real credential.
+# Local development backend. Defaults are public demo fixtures, never production secrets.
 services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Development}"
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__Default: "${ConnectionStrings__Default:-Server=sqlserver,1433;Database=SupportDesk;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Local_Dev_Password1};TrustServerCertificate=True;Encrypt=False}"
+      Jwt__Issuer: "${Jwt__Issuer:-NorthwindSupport.Local}"
+      Jwt__Audience: "${Jwt__Audience:-NorthwindSupport.Web}"
+      Jwt__SigningKey: "${Jwt__SigningKey:-Northwind_LocalDemo_Only_SigningKey_ChangeOutsideDevelopment_2026!}"
+      Jwt__LifetimeMinutes: "${Jwt__LifetimeMinutes:-60}"
+    ports:
+      - "127.0.0.1:5080:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: supportdesk-sql
