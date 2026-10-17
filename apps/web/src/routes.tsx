@@ -1,4 +1,7 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { Navigate, type RouteObject } from 'react-router-dom';
+import { AuthRoot } from './features/auth/AuthRoot';
+import { LoginPage } from './features/auth/LoginPage';
+import { ProtectedRoute } from './features/auth/ProtectedRoute';
 import { App } from './App';
 import { NotFoundPage } from './features/NotFoundPage';
 import { CustomerDetailPage } from './features/customers/CustomerDetailPage';
@@ -7,18 +10,29 @@ import { CreateTicketPage } from './features/tickets/CreateTicketPage';
 import { TicketDetailPage } from './features/tickets/TicketDetailPage';
 import { TicketListPage } from './features/tickets/TicketListPage';
 
-export const router = createBrowserRouter([
+export const routes: RouteObject[] = [
   {
-    path: '/',
-    element: <App />,
+    element: <AuthRoot />,
     children: [
-      { index: true, element: <Navigate to="/tickets" replace /> },
-      { path: 'tickets', element: <TicketListPage /> },
-      { path: 'tickets/new', element: <CreateTicketPage /> },
-      { path: 'tickets/:id', element: <TicketDetailPage /> },
-      { path: 'customers', element: <CustomerListPage /> },
-      { path: 'customers/:id', element: <CustomerDetailPage /> },
-      { path: '*', element: <NotFoundPage /> },
+      { path: '/login', element: <LoginPage /> },
+      {
+        element: <ProtectedRoute />,
+        children: [
+          {
+            path: '/',
+            element: <App />,
+            children: [
+              { index: true, element: <Navigate to="/tickets" replace /> },
+              { path: 'tickets', element: <TicketListPage /> },
+              { path: 'tickets/new', element: <CreateTicketPage /> },
+              { path: 'tickets/:id', element: <TicketDetailPage /> },
+              { path: 'customers', element: <CustomerListPage /> },
+              { path: 'customers/:id', element: <CustomerDetailPage /> },
+              { path: '*', element: <NotFoundPage /> },
+            ],
+          },
+        ],
+      },
     ],
   },
-]);
+];

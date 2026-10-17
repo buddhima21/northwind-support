@@ -1,12 +1,15 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Repositories;
+using SupportDesk.Domain.Aggregates.Agents;
 using SupportDesk.Infrastructure.Data;
 using SupportDesk.Infrastructure.Queries;
 using SupportDesk.Infrastructure.Repositories;
 using SupportDesk.Infrastructure.Services;
+using SupportDesk.Infrastructure.Authentication;
 
 namespace SupportDesk.Infrastructure;
 
@@ -20,12 +23,13 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("Default")
-            ?? throw new InvalidOperationException(
-                "Connection string 'Default' is missing. See README.md for local setup.");
-
         services.AddDbContext<SupportDbContext>(options =>
-            options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
+        {
+            var connectionString = configuration.GetConnectionString("Default")
+                ?? throw new InvalidOperationException(
+                    "Connection string 'Default' is missing. See README.md for local setup.");
+            options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure());
+        });
 
         services.AddScoped<IUnitOfWork>(sp => sp.GetRequiredService<SupportDbContext>());
 
@@ -44,6 +48,8 @@ public static class DependencyInjection
         services.AddScoped<ICategoryQueries, CategoryQueries>();
 
         services.AddScoped<SupportDbSeeder>();
+        services.AddScoped<IPasswordHasher<Agent>, PasswordHasher<Agent>>();
+        services.AddScoped<IAgentAuthenticationService, AgentAuthenticationService>();
 
         return services;
     }

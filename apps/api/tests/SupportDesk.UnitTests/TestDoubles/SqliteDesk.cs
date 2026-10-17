@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.AspNetCore.Identity;
+using SupportDesk.Domain.Aggregates.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using SupportDesk.Application.Features.Tickets.Commands.EscalateTicket;
@@ -41,7 +43,8 @@ internal sealed class SqliteDesk : IAsyncDisposable
         await desk._connection.OpenAsync();
         await desk.Db.Database.EnsureCreatedAsync();
         if (seed)
-            await new SupportDbSeeder(desk.Db, desk.Clock, desk.Policy, NullLogger<SupportDbSeeder>.Instance).SeedAsync();
+            await new SupportDbSeeder(desk.Db, desk.Clock, desk.Policy,
+                NullLogger<SupportDbSeeder>.Instance, new PasswordHasher<Agent>()).SeedAsync();
         desk.Db.ChangeTracker.Clear();
         return desk;
     }

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using SupportDesk.Application.Abstractions;
 using SupportDesk.Domain.Aggregates.Agents;
@@ -10,21 +11,33 @@ namespace SupportDesk.Infrastructure.Data;
 
 /// <summary>
 /// Development seed data: the small support desk the team uses to demo the application.
-/// Mirrors <c>database/02_seed.sql</c>, including the relative timestamps, so both routes
+/// Mirrors <c>db/seed.sql</c>, including the relative timestamps, so both routes
 /// produce the same database.
 /// </summary>
 /// <remarks>
 /// Every aggregate is built through its own behaviour. The two historical values no behaviour
 /// produces - a ticket's last update and its due date - are set through EF Core directly.
 /// </remarks>
-public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy slaPolicy, ILogger<SupportDbSeeder> logger)
+public sealed class SupportDbSeeder(
+    SupportDbContext db,
+    IClock clock,
+    SlaPolicy slaPolicy,
+    ILogger<SupportDbSeeder> logger,
+    IPasswordHasher<Agent> passwordHasher)
 {
-    /// <summary>Seeds the database, unless it already has tickets in it.</summary>
+    // Public local fixture only. Never use this password outside the development demo.
+    public const string DevelopmentPassword = "Northwind_LocalDemo_Only1!";
+    public const string AlexDevelopmentEmail = "alex.turner@northwind.com";
+    public const string AlexDevelopmentPassword = "northwind_alexturner";
+    private const string LegacyAlexEmail = "alex.turner@northwind-support.example";
+
+    /// <summary>Seeds demo data and provisions missing credentials on existing demo agents.</summary>
     public async Task SeedAsync(CancellationToken ct = default)
     {
         if (await db.Set<Ticket>().AnyAsync(ct))
         {
-            logger.LogInformation("Seed data already present; skipping.");
+            await SeedMissingDevelopmentCredentialsAsync(ct);
+            logger.LogInformation("Seed data already present; checked missing demo credentials.");
             return;
         }
 
@@ -33,6 +46,10 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy
         var categories = SeedCategories();
         var customers = SeedCustomers(now);
         var agents = SeedAgents(now);
+        foreach (var agent in agents)
+        {
+            agent.SetPasswordHash(passwordHasher.HashPassword(agent, PasswordFor(agent)));
+        }
 
         db.AddRange(categories);
         db.AddRange(customers);
@@ -49,6 +66,44 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy
             "Seeded {Categories} categories, {Customers} customers, {Agents} agents and {Tickets} tickets.",
             categories.Count, customers.Count, agents.Count, await db.Set<Ticket>().CountAsync(ct));
     }
+
+    private async Task SeedMissingDevelopmentCredentialsAsync(CancellationToken ct)
+    {
+        var demoEmails = SeedAgents(clock.UtcNow).Select(agent => agent.Email).Append(LegacyAlexEmail).ToArray();
+        var agents = await db.Set<Agent>()
+            .Where(agent => demoEmails.Contains(agent.Email))
+            .ToListAsync(ct);
+
+        if (agents.Any(agent => agent.Email == LegacyAlexEmail)
+            && agents.Any(agent => agent.Email == AlexDevelopmentEmail))
+            throw new InvalidOperationException("Both old and new Alex demo accounts exist. Resolve the duplicate before seeding.");
+
+        foreach (var agent in agents)
+        {
+            if (agent.Email == LegacyAlexEmail)
+            {
+                // Upgrade the development fixture in place, preserving IDs and relationships.
+                db.Entry(agent).Property(a => a.Email).CurrentValue = AlexDevelopmentEmail;
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, AlexDevelopmentPassword));
+            }
+            else if (agent.PasswordHash is null)
+            {
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, PasswordFor(agent)));
+            }
+            else if (agent.Email == AlexDevelopmentEmail
+                && passwordHasher.VerifyHashedPassword(agent, agent.PasswordHash, DevelopmentPassword)
+                    != PasswordVerificationResult.Failed)
+            {
+                // Also upgrade a demo account whose email was already changed independently.
+                agent.SetPasswordHash(passwordHasher.HashPassword(agent, AlexDevelopmentPassword));
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static string PasswordFor(Agent agent) =>
+        agent.Email == AlexDevelopmentEmail ? AlexDevelopmentPassword : DevelopmentPassword;
 
     private static List<Category> SeedCategories() =>
     [
@@ -76,7 +131,7 @@ public sealed class SupportDbSeeder(SupportDbContext db, IClock clock, SlaPolicy
 
         return
         [
-            new("Alex Turner", "alex.turner@northwind-support.example", 10, now.AddDays(-500)),
+            new("Alex Turner", AlexDevelopmentEmail, 10, now.AddDays(-500)),
             new("Ben Osei", "ben.osei@northwind-support.example", 8, now.AddDays(-460)),
             new("Priya Nair", "priya.nair@northwind-support.example", 8, now.AddDays(-400)),
             new("Sara Lindqvist", "sara.lindqvist@northwind-support.example", 6, now.AddDays(-280)),

@@ -82,6 +82,22 @@ a {
   padding: 24px;
 }
 
+.app__session {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.auth-page { max-width: 480px; padding-top: 48px; }
+.auth-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+@media (max-width: 640px) {
+  .app__header { flex-wrap: wrap; gap: 12px 24px; }
+  .app__session { margin-left: 0; width: 100%; }
+}
+
 .page-header {
   display: flex;
   align-items: flex-start;

@@ -13,22 +13,15 @@ describe('EscalationPanel', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<EscalationPanel ticket={ticketDetail()} onUpdated={vi.fn()} onReload={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: reason } });
-    fireEvent.change(screen.getByLabelText('Escalated by'), { target: { value: 'alex.lead' } });
     await userEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
     expect(screen.getByText('Enter a reason of 5 to 500 characters.')).toBeInTheDocument();
     expect(screen.getByLabelText('Reason')).toHaveAttribute('aria-invalid', 'true');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each(['', ' '.repeat(3), 'a'.repeat(101)])('validates the required actor before submission (%s)', async (actor) => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal('fetch', fetchMock);
+  it('does not offer an editable escalation actor', () => {
     render(<EscalationPanel ticket={ticketDetail()} onUpdated={vi.fn()} onReload={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Valid reason' } });
-    fireEvent.change(screen.getByLabelText('Escalated by'), { target: { value: actor } });
-    await userEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
-    expect(screen.getByLabelText('Escalated by')).toHaveAttribute('aria-invalid', 'true');
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Escalated by')).not.toBeInTheDocument();
   });
 
   it.each<Partial<TicketDetail>>([{ priority: 'Critical' }, { status: 'Resolved' }, { status: 'Closed' }])('disables escalation when the ticket is ineligible: %j', (overrides) => {
@@ -44,13 +37,12 @@ describe('EscalationPanel', () => {
     const onUpdated = vi.fn();
     render(<EscalationPanel ticket={ticketDetail()} onUpdated={onUpdated} onReload={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: `  ${'x'.repeat(length)}  ` } });
-    fireEvent.change(screen.getByLabelText('Escalated by'), { target: { value: ' alex.lead ' } });
     await userEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
     expect(screen.getByRole('button', { name: 'Escalating...' })).toBeDisabled();
     expect(screen.getByLabelText('Reason')).toBeDisabled();
     fireEvent.submit(screen.getByRole('button', { name: 'Escalating...' }).closest('form')!);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ reason: 'x'.repeat(length), escalatedBy: 'alex.lead' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ reason: 'x'.repeat(length) });
     const updated = ticketDetail({ priority: 'Critical' });
     await act(async () => { finish(new Response(JSON.stringify(updated))); });
     expect(onUpdated).toHaveBeenCalledWith(updated);
@@ -64,7 +56,6 @@ describe('EscalationPanel', () => {
     const onUpdated = vi.fn();
     render(<EscalationPanel ticket={ticketDetail()} onUpdated={onUpdated} onReload={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Valid reason' } });
-    fireEvent.change(screen.getByLabelText('Escalated by'), { target: { value: 'alex.lead' } });
     await userEvent.click(screen.getByRole('button', { name: 'Escalate ticket' }));
     expect(await screen.findByText('Please give more detail.')).toBeInTheDocument();
     expect(screen.getByLabelText('Reason')).toHaveValue('Valid reason');

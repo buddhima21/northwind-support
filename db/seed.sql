@@ -62,7 +62,7 @@ SET IDENTITY_INSERT dbo.Customers OFF;
    Yuki Tanaka is inactive but still owns historic closed tickets.            */
 SET IDENTITY_INSERT dbo.Agents ON;
 INSERT INTO dbo.Agents (Id, FullName, Email, IsActive, MaxOpenTickets, CreatedAtUtc) VALUES
-    (1, N'Alex Turner',    N'alex.turner@northwind-support.example',    1, 10, DATEADD(DAY, -500, @Now)),
+    (1, N'Alex Turner',    N'alex.turner@northwind.com',    1, 10, DATEADD(DAY, -500, @Now)),
     (2, N'Ben Osei',       N'ben.osei@northwind-support.example',       1,  8, DATEADD(DAY, -460, @Now)),
     (3, N'Priya Nair',     N'priya.nair@northwind-support.example',     1,  8, DATEADD(DAY, -400, @Now)),
     (4, N'Sara Lindqvist', N'sara.lindqvist@northwind-support.example', 1,  6, DATEADD(DAY, -280, @Now)),

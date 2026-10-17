@@ -1,4 +1,9 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using System.Globalization;
+using SupportDesk.Application.Abstractions;
+using SupportDesk.Infrastructure.Authentication;
 using SupportDesk.Application;
 using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Infrastructure;
@@ -28,6 +33,39 @@ builder.Services.AddCors(options => options.AddPolicy(
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddSingleton(services =>
+{
+    var settings = services.GetRequiredService<IConfiguration>().GetRequiredSection("Jwt").Get<JwtSettings>()
+        ?? throw new InvalidOperationException("The Jwt configuration section is missing.");
+    settings.Validate();
+    return settings;
+});
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<JwtSettings>((options, settings) =>
+    {
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = settings.CreateValidationParameters();
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                if (!int.TryParse(context.Principal?.FindFirst("sub")?.Value,
+                    NumberStyles.None, CultureInfo.InvariantCulture, out var agentId) || agentId <= 0)
+                {
+                    context.Fail("Invalid agent identity.");
+                    return;
+                }
+
+                var authentication = context.HttpContext.RequestServices.GetRequiredService<IAgentAuthenticationService>();
+                if (await authentication.GetActiveAgentAsync(agentId, context.HttpContext.RequestAborted) is null)
+                    context.Fail("Invalid agent identity.");
+            }
+        };
+    });
+builder.Services.AddAuthorization(options =>
+    options.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+
 // Bind and validate the shared business configuration at startup. The policy itself
 // has no dependency on ASP.NET, configuration binding, or the database.
 var slaSettings = builder.Configuration.GetRequiredSection("Sla").Get<SlaSettings>()
@@ -38,6 +76,8 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+// Validate the final configuration before serving requests, including host overrides.
+_ = app.Services.GetRequiredService<JwtSettings>();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
@@ -51,7 +91,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors(FrontendCorsPolicy);
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 
 app.Run();
+
+// Exposes the entry point to the HTTP integration test host.
+public partial class Program;
