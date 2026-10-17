@@ -122,7 +122,7 @@ reasoning in more detail.
 | --- | --- |
 | Task 1: defect fix and server-side filtering | Implemented, tested and merged |
 | Task 2: ticket escalation and assignment | Backend and frontend implemented and verified |
-| Task 3: login and authentication | Step 1 complete: credentials, migration and development seed; login and authorization pending |
+| Task 3: login and authentication | Steps 1-2: credentials, login/JWT and authenticated `/me`; global protection and UI pending |
 | Task 4: API containerization | Not implemented yet; Compose starts SQL Server only |
 | Optional SLA summary report | Deferred until Tasks 1-3 are complete |
 
@@ -224,8 +224,9 @@ fixture, not an application login. Compose reads `.env`; `dotnet run` does not l
 it automatically. Set `$env:ConnectionStrings__Default` in the API terminal to
 override its database connection. Never commit `.env` or real credentials.
 
-Task 3 is in progress: password storage and development credential seeding are implemented,
-but there is no login endpoint/screen, JWT issuance/storage or token lifetime yet. For Task 2, `escalatedBy` comes
+Task 3 is in progress: password storage, development seeding, login/JWT issuance and
+authenticated `/api/auth/me` are implemented. Global endpoint protection, login UI and
+browser token storage are pending. For Task 2, `escalatedBy` comes
 from the form/request body; authentication must replace it with the token identity.
 Task 4 is also pending: there is no API image, image-size measurement or container
 migration workflow to report. The existing Compose service runs SQL Server, and the
@@ -246,8 +247,8 @@ registration or password-reset functionality.
 
 Development startup applies the migration and seeds all six demo agents with the public
 local fixture password `Northwind_LocalDemo_Only1!`. Example email:
-`alex.turner@northwind-support.example`. These credentials will become usable when the
-login endpoint is added. Yuki remains inactive and must be blocked by that endpoint.
+`alex.turner@northwind-support.example`. These credentials are usable at the login
+endpoint. Yuki remains inactive and cannot log in.
 Only hashes are saved. Existing demo databases receive missing hashes without resetting
 existing credentials, creating credentials for other agents, or changing tickets. The
 seeder is called only during Development startup; never use this fixture in production.
@@ -262,6 +263,56 @@ architecture tests, the Release API build, the EF migration-model check and whit
 checks. Existing NU1902/NU1903 dependency warnings remain. In this Windows environment,
 the reliable backend test command was
 `dotnet test --configuration Release -m:1 -p:UseSharedCompilation=false`.
+
+#### Task 3, step 2: login, JWT and current user
+
+`POST /api/auth/login` accepts `{ "email": "...", "password": "..." }`. Email is
+trimmed and matched case-insensitively; passwords are verified exactly as supplied.
+Invalid field shapes return 400. Unknown email, incorrect password, inactive agent and
+missing credentials all return 401 with `Invalid email or password.` and no token.
+Unknown users still undergo password verification against a dummy hash. Successful
+verification upgrades older password hashes when Identity requests rehashing.
+
+Success returns `accessToken`, `expiresAtUtc`, and `user` (`id`, `fullName`, `email`).
+The JWT is signed with HS256 and includes the agent ID as `sub`, name, email, and a
+unique `jti`. Lifetime is 60 minutes; expired tokens have no grace period. There are
+no refresh tokens. The returned expiry matches the token's second-precision expiry.
+
+`GET /api/auth/me` requires `Authorization: Bearer <accessToken>`. Middleware checks
+signature, algorithm, issuer, audience and lifetime. The endpoint then fetches the
+active agent by `sub`, so deactivating an agent also blocks `/me`. Password hashes
+are never returned. Other endpoints are still open until Step 3; Step 3 will also
+replace the caller-supplied escalation actor with the authenticated identity.
+
+`Jwt` configuration contains `Issuer`, `Audience`, `SigningKey` and `LifetimeMinutes`.
+Startup rejects missing issuer/audience, a key shorter than 32 UTF-8 bytes, or a
+lifetime outside 1-1440 minutes. Development settings contain a clearly named public
+fixture key only. Outside development supply a separate randomly generated secret
+through `Jwt__SigningKey`; never commit it. `.env.example` lists all variables, but
+`dotnet run` does not load `.env` automatically. Browser token storage is decided in
+the frontend step. JWTs are signed, not encrypted; do not place secrets in claims.
+
+For a manual check, start SQL Server and the API as in Quick start, then run:
+
+```powershell
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:5043/api/auth/login `
+    -ContentType 'application/json' `
+    -Body '{"email":"alex.turner@northwind-support.example","password":"Northwind_LocalDemo_Only1!"}'
+Invoke-RestMethod -Uri http://localhost:5043/api/auth/me `
+    -Headers @{ Authorization = "Bearer $($login.accessToken)" }
+```
+
+The `SupportDesk.ApiTests` project runs the actual HTTP endpoints, validation and JWT
+middleware against isolated SQLite databases with the reusable FixedClock. It is
+included in `dotnet test`/`npm test` and does not require SQL Server. Tests cover valid
+login/current user, case-insensitive email, generic failures, missing credentials,
+invalid input, missing/malformed/expired/tampered tokens, incorrect issuer/audience,
+and deactivation after login.
+
+Step 2 verification on 2026-10-17 passed 188 backend unit/integration tests, four
+architecture tests and 14 HTTP authentication tests (206 total). The API and test
+projects built in Release and whitespace checks passed. NuGet audit completed after
+refreshing restore metadata; only the previously documented Pkcs warnings remain.
 
 ### Testing and verification
 

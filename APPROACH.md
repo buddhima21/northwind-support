@@ -121,3 +121,35 @@ provisions null hashes for the exact six demo email addresses before returning. 
 preserves established hashes, other accounts, ticket data and Yuki's inactive status.
 Fresh databases hash the documented public development password separately per agent.
 Relational tests verify both fresh and existing-database paths and repeated seeding.
+
+## Task 3, step 2: login and signed identity
+
+The application defines the authentication contract and DTOs; Infrastructure implements
+credential lookup, Identity password verification and JWT issuance. The HTTP controller
+only maps success/failure to responses and reads the authenticated subject for `/me`.
+This keeps EF and signing libraries out of Application and Domain. I used the built-in
+bearer middleware rather than writing token parsing or signature validation myself.
+
+Email matching trims and compares case-insensitively; the six-agent scope makes the
+SQL UPPER comparison acceptable, while a large user directory should use an indexed
+normalized email column. Passwords are never trimmed. Failed authentication has one
+generic message, with dummy password verification for unknown/missing credentials.
+Inactive users are rejected even with the correct password. Successful login rehashes
+credentials if Identity requests an algorithm/work-factor upgrade.
+
+Tokens last one hour and contain a stable agent ID in `sub`, public profile claims,
+and a unique identifier. Issuance uses IClock; middleware validates signature, issuer,
+audience, HS256 algorithm and expiry without clock-skew grace. The signing key comes
+from validated configuration. The committed development key is a public fixture only.
+`/me` reloads the active agent so stale profile claims do not override current data.
+
+HTTP integration tests use the real middleware and controllers with isolated SQLite
+databases and the existing FixedClock. They exposed an early configuration-binding
+problem: test-host overrides were applied after Program first read JWT settings. I
+moved resolution to the built host and retained startup validation before requests.
+Global authorization and the escalation actor remain the next separate commit.
+
+Step 2 verification passed all 14 HTTP tests, 188 existing backend tests and four
+architecture tests. Test hosting also required resolving the database connection string
+when configuring DbContext rather than before the host could replace its provider.
+No database migration was needed in this step; the credential column is from Step 1.

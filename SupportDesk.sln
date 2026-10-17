@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SupportDesk.ArchitectureTes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SupportDesk.UnitTests", "apps\api\tests\SupportDesk.UnitTests\SupportDesk.UnitTests.csproj", "{8FE83452-E7D3-4921-8A10-D781D455C29D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SupportDesk.ApiTests", "apps\api\tests\SupportDesk.ApiTests\SupportDesk.ApiTests.csproj", "{2016AFEA-EC02-4547-8490-278C3D44944C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -101,6 +103,18 @@ Global
 		{8FE83452-E7D3-4921-8A10-D781D455C29D}.Release|x64.Build.0 = Release|Any CPU
 		{8FE83452-E7D3-4921-8A10-D781D455C29D}.Release|x86.ActiveCfg = Release|Any CPU
 		{8FE83452-E7D3-4921-8A10-D781D455C29D}.Release|x86.Build.0 = Release|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Debug|x64.Build.0 = Debug|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Debug|x86.Build.0 = Debug|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Release|x64.ActiveCfg = Release|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Release|x64.Build.0 = Release|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Release|x86.ActiveCfg = Release|Any CPU
+		{2016AFEA-EC02-4547-8490-278C3D44944C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -112,5 +126,6 @@ Global
 		{4DAB20F7-C0CB-4F52-9E5C-DA88FB191787} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{0CE84FAF-F0A3-4417-8656-C1DF8B8CFBAA} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{8FE83452-E7D3-4921-8A10-D781D455C29D} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{2016AFEA-EC02-4547-8490-278C3D44944C} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

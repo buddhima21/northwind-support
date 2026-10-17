@@ -1,4 +1,6 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using SupportDesk.Infrastructure.Authentication;
 using SupportDesk.Application;
 using SupportDesk.Domain.Aggregates.Tickets;
 using SupportDesk.Infrastructure;
@@ -28,6 +30,22 @@ builder.Services.AddCors(options => options.AddPolicy(
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddSingleton(services =>
+{
+    var settings = services.GetRequiredService<IConfiguration>().GetRequiredSection("Jwt").Get<JwtSettings>()
+        ?? throw new InvalidOperationException("The Jwt configuration section is missing.");
+    settings.Validate();
+    return settings;
+});
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<JwtSettings>((options, settings) =>
+    {
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = settings.CreateValidationParameters();
+    });
+builder.Services.AddAuthorization();
+
 // Bind and validate the shared business configuration at startup. The policy itself
 // has no dependency on ASP.NET, configuration binding, or the database.
 var slaSettings = builder.Configuration.GetRequiredSection("Sla").Get<SlaSettings>()
@@ -38,6 +56,8 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+// Validate the final configuration before serving requests, including host overrides.
+_ = app.Services.GetRequiredService<JwtSettings>();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
@@ -51,7 +71,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors(FrontendCorsPolicy);
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 
 app.Run();
+
+// Exposes the entry point to the HTTP integration test host.
+public partial class Program;
